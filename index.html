@@ -4,76 +4,86 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Douglass Jeffrey</title>
-  <style>
-    body {
-      max-width: 700px;
-      margin: 40px auto;
-      padding: 0 15px;
-      font-family: Georgia, serif;
-      line-height: 1.5;
-      color: #222;
-      background: #fff;
-    }
-    h1 { margin-bottom: 0; }
-    h2 { border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 30px; }
-    a { color: #0645ad; }
-    .small { color: #666; font-size: 0.9em; }
-    li { margin-bottom: 8px; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
   <h1>Douglass Jeffrey</h1>
-  <p class="small">Hardware engineer &middot; Ottawa, ON</p>
+  <p class="small">Applied Mathematics and Computer Engineer - Ontario, Canada</p>
 
   <p>
-    <a href="mailto:douglass.a.jeffrey@gmail.com">Email</a> |
+    <a href="mailto:douglassjeffrey8@gmail.com">Email</a> |
     <a href="https://github.com/Douglass-Jeffrey">GitHub</a> |
-    <a href="https://www.linkedin.com/in/douglass-jeffrey">LinkedIn</a> |
-    <a href="resume.pdf">Resume (PDF)</a>
+    <a href="https://www.linkedin.com/in/douglass-jeffrey">LinkedIn</a>
+    <!--<a href="resume.pdf">Resume (PDF)</a>-->
   </p>
 
   <h2>About</h2>
   <p>
-    Hi! I'm Douglass. I work on hardware design and verification at AMD, and I studied
-    Mathematics and Engineering (Computing and Communications) at Queen's University.
-    I'm mostly interested in computer architecture, GPUs, and high performance computing.
-    This is where I keep track of my projects and anything I write.
+    I study Applied Mathematics and Computer Engineering at Queen's University. Some of my interests include algorithmic optimization, computer architecture and hardware design. This is a portfolio of some of my projects.
   </p>
 
   <h2>Projects</h2>
+  <!--
+  <article class="project">
+    <a href="projects/polya-capstone.html"><img src="images/capstone-network.jpg" width="600" height="400" alt="A large network rendered in Gephi, with most nodes turned red as the contagion spreads"></a>
+    <div>
+      <h3><a href="projects/polya-capstone.html">P&oacute;lya Contagion on Large Networks</a></h3>
+      <p>
+        Designed a GPU-accelerated algorithm for simulating the graphed P&oacute;lya contagion process on scale free networks with tens of millions of nodes. Optimized the algorithm for performance and scalability on available hardware.  Comparing different intervention strategies to optimize cost while achieving consensus. 
+      </p>
+      <p class="small"><a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks">GitHub</a>, <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks/blob/optimization/docs/MTHE_493___Thesis.pdf">Thesis</a></p>
+    </div>
+  </article>
+
+  <article class="project">
+    <a href="projects/pipelined-processor.html"><img src="images/processor-pipeline.svg" width="600" height="400" alt="Block diagram of a five-stage pipeline with instruction and data caches in front of SRAM"></a>
+    <div>
+      <h3><a href="projects/pipelined-processor.html">Pipelined RISC-V Processor on an FPGA</a></h3>
+      <p>
+        5-stage pipelined RV32I CPU in Verilog, running at 50 MHz on a Cyclone II FPGA. Features forwarding, branch prediction, and write back direct mapped cache using fabric M4k's and onboard SRAM. 
+      </p>
+      <p class="small"><a href="https://github.com/Douglass-Jeffrey/Cyclone-2-Pipelined-Processor">GitHub</a></p>
+    </div>
+  </article>
+
+  <article class="project">
+    <a href="projects/gradient-free-optimization.html"><img src="images/gfo-cbo-thumb.png" width="600" height="400" alt="A swarm of particles contracting onto the minimum of a bumpy two-dimensional function"></a>
+    <div>
+      <h3><a href="projects/gradient-free-optimization.html">Gradient-Free Optimization on GPUs</a></h3>
+      <p>
+        Consensus-based optimization DJEFFREY TODO
+      </p>
+      <p class="small"><a href="https://github.com/Douglass-Jeffrey/gradient_free_optimization">GitHub</a></p>
+    </div>
+  </article>
+-->
+  <article class="project">
+    <a href="projects/QML-project-qiskit-2026.html"><img src="images/test_run01_learning_curves.png" width="600" height="400" alt="Prediction accuracy plots for a variety of QML, ML, SL models of varying training dataset sizes."></a>
+    <div>
+      <h3><a href="projects/QML-project-qiskit-2026.html">IBM Quantum Machine Learning Hackathon</a></h3>
+      <p>
+        Designed a variety of quantum machine learning algorithms for regression tasks, comparing them against their classical machine learning and statistical learning counterparts. We came second place in the competition.
+      </p>
+      <p class="small"><a href="https://github.com/Douglass-Jeffrey/IBM_Qiskit_Quantum_Computing_Hackathon">GitHub</a>, 
+      <a href="https://github.com/Douglass-Jeffrey/IBM_Qiskit_Quantum_Computing_Hackathon/blob/main/presentation/QM9%20Dipoles%20Quantum%20vs%20Classical%20FINAL%20(1).pdf">Presentation</a>
+      </p>
+    </div>
+  </article>
+
+
+  <h3>Earlier projects</h3>
   <ul>
-    <li>
-      <b><a href="https://github.com/Douglass-Jeffrey/Drawn-number-classifier-project">Drawn Number Classifier</a></b><br>
-      A TensorFlow model trained on MNIST (97% test accuracy) with a little Pygame app
-      so you can draw a digit and have it guessed in real time.
-    </li>
     <li>
       <b><a href="https://github.com/Douglass-Jeffrey/qhacks-2023">GuardDrive</a></b> <span class="small">(QHacks 2023)</span><br>
-      A CNN built with TensorFlow/Keras that detects distracted driving from a laptop
-      camera feed. 96% accuracy on the test set.
+      A CNN built with TensorFlow/Keras that detects distracted driving from a laptop camera feed. 96% accuracy on the test set.
     </li>
-    <!-- To add a project, copy this:
     <li>
-      <b><a href="LINK">Project name</a></b><br>
-      One or two sentences about what it does.
+      <b><a href="https://github.com/Douglass-Jeffrey/Drawn-number-classifier-project">Drawn Number Classifier</a></b><br>
+      A TensorFlow model trained on MNIST (97% test accuracy) with a little Pygame app so you can draw a digit and have it guessed in real time.
     </li>
-    -->
-  </ul>
 
-  <h2>Papers &amp; Writing</h2>
-  <p class="small">Nothing here yet.</p>
-  <!-- To add a paper, uncomment and fill in:
-  <ul>
-    <li>
-      <b><a href="papers/my-paper.pdf">Paper title</a></b><br>
-      Authors. <i>Venue</i>, Year.
-    </li>
   </ul>
-  -->
-
-  <h2>Resume</h2>
-  <p>You can download my resume <a href="resume.pdf">here</a>.</p>
 
   <hr>
   <p class="small">Last updated October 2026.</p>

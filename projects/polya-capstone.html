@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P&oacute;lya Contagion on Large Networks - Douglass Jeffrey</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+  <p class="small"><a href="../index.html"> <-Home</a></p>
+
+  <h1>P&oacute;lya Contagion on Large Networks</h1>
+  <p class="small">
+    MTHE 493 Capstone - Queen's University - 2026 -
+    <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks">Code on GitHub</a>
+  </p>
+
+  <figure>
+    <video controls muted loop playsinline preload="none" width="1280" height="914" poster="../images/capstone-animation-poster.jpg">
+      <source src="../images/capstone-animation.mp4" type="video/mp4">
+    </video>
+    <figcaption>
+      The P&oacute;lya process running on a grown network with the injection intervention, rendered in Gephi.
+      Nodes turn red as their urns fill with red balls; the inset histogram shows how the fraction of red
+      balls is spread across all the urns.
+    </figcaption>
+  </figure>
+
+  <h2>Overview</h2>
+  <p>
+    A P&oacute;lya urn is a simple model of contagion: draw a ball, put it back along with more balls of the
+    same colour, and whatever is common becomes more common. Put an urn at every node of a network and have
+    each node draw from a "super urn" made of its own urn and its neighbours', and you get a model of how an
+    idea or an infection spreads through a population.
+  </p>
+  <p>
+    For my capstone I wanted to run this process on networks big enough to look like real social networks,
+    and then test strategies for steering it by intervening at the most connected nodes. Most of the work
+    turned out to be making the simulation fast enough to do that at tens of millions of nodes.
+  </p>
+
+  <h2>How it works</h2>
+  <ul>
+    <li>
+      <b>Everything is vectorized.</b> The urns are one array with a row per node, and the network is a
+      sparse (CSR) matrix. A P&oacute;lya step is a sparse matrix product to build every super urn at once,
+      one random draw per node, and an add, with no Python loops over nodes. It runs on the GPU through
+      CuPy and falls back to NumPy/SciPy on the CPU.
+    </li>
+    <li>
+      <b>Switched networks in one bit per node.</b> In switched-network growth each new node either connects
+      to every earlier node or to none of them, decided by a Bernoulli trial. That means the whole graph can
+      be stored as a single bit per node instead of an adjacency matrix. With that representation a
+      1-billion-node network runs on a desktop CPU with 32 GB of RAM at about 200 seconds per P&oacute;lya step.
+    </li>
+    <li>
+      <b>Batched Barab&aacute;si&ndash;Albert growth.</b> To model social networks, nodes attach preferentially
+      to already well-connected nodes. Sampling from a list of edge endpoints, where each node appears once
+      per connection, is the same as sampling by degree, so it can be done in large vectorized batches.
+      Batches that grow exponentially in size were the fastest.
+    </li>
+    <li>
+      <b>Interventions.</b> Two strategies target the highest-degree nodes. The first adds new red-biased
+      nodes wired to them. The second injects balls straight into their urns, which avoids rebuilding the
+      sparse graph between steps. There is also a variant that ranks nodes by eigenvector centrality,
+      computed with power iteration.
+    </li>
+  </ul>
+
+  <h2>Results</h2>
+  <figure>
+    <img src="../images/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over Polya process steps, with most nodes moving to nearly all red by about step 400">
+    <figcaption>
+      Each column is one P&oacute;lya step, and the colour shows what fraction of nodes have a given proportion
+      of red balls. Starting from mixed urns, most of the network converges to nearly all red by around step 400.
+    </figcaption>
+  </figure>
+
+  <p>
+    I benchmarked the full pipeline (growing the network, building the sparse matrix, and running 100
+    P&oacute;lya steps) on my desktop's Ryzen 3 3100 and GTX 1660 Ti, and on an 80 GB A100 in Google Colab:
+  </p>
+  <table>
+    <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti</th><th>A100</th></tr>
+    <tr><td>2.2 M</td><td>13.4 M</td><td>38.2 s</td><td>3.7 s</td><td>1.7 s</td></tr>
+    <tr><td>17.9 M</td><td>107 M</td><td>348 s</td><td>25.3 s</td><td>9.3 s</td></tr>
+    <tr><td>71.6 M</td><td>430 M</td><td>1,565 s</td><td>1,557 s</td><td>37.9 s</td></tr>
+  </table>
+  <p>
+    The 1660 Ti is about 14&times; faster than the CPU until the graph no longer fits in its 6 GB of VRAM.
+    Past that point the GPU spends its time paging through unified memory in system RAM and drops back to
+    CPU speed. The A100 keeps scaling and finishes the largest run about 41&times; faster than the CPU.
+  </p>
+  <figure>
+    <img src="../images/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100">
+    <figcaption>Total compute time against network size (both axes log scale).</figcaption>
+  </figure>
+
+  <h2>What's next</h2>
+  <ul>
+    <li>Splitting work between CPU and GPU, so graphs larger than VRAM stay in system RAM and are streamed to the GPU in blocks.</li>
+    <li>Storing edges as bits instead of 32-bit integers to cut graph memory further.</li>
+    <li>Growth rules beyond Bernoulli trials.</li>
+  </ul>
+
+  <h2>Tools</h2>
+  <p>Python, NumPy, SciPy (sparse matrices), CuPy and CUDA, Google Colab, Gephi.</p>
+
+  <hr>
+  <p class="small"><a href="../index.html"> <- Back to home</a></p>
+
+</body>
+</html>

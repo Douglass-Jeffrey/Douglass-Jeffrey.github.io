@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipelined RISC-V Processor - Douglass Jeffrey</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+  <p class="small"><a href="../index.html"> <- Douglass Jeffrey</a></p>
+
+  <h1>Pipelined RISC-V Processor on an FPGA</h1>
+  <p class="small">
+    Personal project - 2026 - <a href="https://github.com/Douglass-Jeffrey/Cyclone-2-Pipelined-Processor">GitHub</a>
+  </p>
+
+  <figure>
+    <img src="../images/processor-pipeline.svg" width="600" height="400" alt="Block diagram of the five pipeline stages, with forwarding from MEM and WB into EX, and the icache and dcache connected through a memory arbiter and SRAM controller to 512 KB of SRAM">
+    <figcaption>The five pipeline stages and the memory system behind them.</figcaption>
+  </figure>
+
+  <h2>Overview</h2>
+  <p>
+    A 5-stage, in-order RISC-V (RV32I) processor written in Verilog. It runs at 50 MHz on the Cyclone II FPGA
+    of an Altera DE1 board, with an 8 KB instruction cache and a 16 KB data cache in front of the board's
+    512 KB SRAM. Every design change is checked against a Python reference model with directed, random and
+    unit testbenches before it goes on the board.
+  </p>
+  <table>
+    <tr><td>ISA</td><td>RV32I (no CSRs, traps or interrupts)</td></tr>
+    <tr><td>Pipeline</td><td>IF, ID, EX, MEM, WB, in order</td></tr>
+    <tr><td>Clock</td><td>50 MHz, Fmax about 52&ndash;54 MHz</td></tr>
+    <tr><td>Caches</td><td>8 KB icache + 16 KB dcache, direct mapped, 16-byte lines</td></tr>
+    <tr><td>FPGA use</td><td>~6,300 of 18,752 logic elements, all 52 M4K RAM blocks</td></tr>
+  </table>
+
+  <h2>Pipeline and hazards</h2>
+  <p>
+    Most data hazards are handled without stalling. Results are forwarded from MEM or WB straight into
+    EX, and the register file writes through so an instruction in ID sees a value being written back in the
+    same cycle. The only stall is a load followed immediately by an instruction that uses the loaded value.
+  </p>
+  <table>
+    <tr><th>Hazard</th><th>Handled by</th><th>Cost</th></tr>
+    <tr><td>ALU result used by the next instruction</td><td>Forwarding from MEM or WB into EX</td><td>0 cycles</td></tr>
+    <tr><td>Load result used by the next instruction</td><td>Load-use interlock</td><td>1 cycle</td></tr>
+    <tr><td>Store right after the load that produces its data</td><td>Load-to-store forwarding in MEM</td><td>0 cycles</td></tr>
+    <tr><td>Branch mispredict or <code>jalr</code></td><td>Redirect from EX</td><td>1 cycle</td></tr>
+  </table>
+  <p>
+    Branches are predicted in ID with 32 two-bit saturating counters, so a correctly predicted taken branch
+    costs nothing. Predicting in ID instead of IF keeps the predictor off the critical path into the next
+    fetch address.
+  </p>
+
+  <h2>Memory system</h2>
+  <ul>
+    <li><b>icache:</b> 8 KB, direct mapped, read only. A miss stalls the front of the pipeline while the instructions already past it keep going.</li>
+    <li><b>dcache:</b> 16 KB, direct mapped, write-back, and allocates on a store miss. Each byte of a word lives in its own RAM lane, so byte and halfword stores finish in one cycle with no read-modify-write.</li>
+    <li><b>Memory arbiter:</b> picks between icache and dcache requests and gives the dcache priority, since its misses freeze the whole pipeline.</li>
+    <li><b>SRAM controller:</b> moves a 16-byte cache line as eight 16-bit transfers to the board's asynchronous SRAM.</li>
+  </ul>
+  <p>A dcache miss costs about 42 cycles, or about 85 if a dirty line has to be written back first.</p>
+
+  <h2>Timing</h2>
+  <p>
+    The critical path runs from load data leaving the dcache, through forwarding and the branch comparator,
+    to the next fetch address. Adding the caches pushed it past the 20 ns clock period. Two changes brought it back under:
+    computing the next PC for both branch outcomes in parallel and choosing between them at the last mux, and
+    giving <code>jalr</code> its own adder instead of waiting on the ALU.
+  </p>
+
+  <h2>Verification</h2>
+  <p>
+    Each test program runs on both the RTL and an independent RV32I reference model written in Python. The runner
+    compares the trace of retired instructions one by one, the final registers and memory, and the exact number of
+    stalls and flushes, so a pipeline that stalls when it doesn't need to still fails. The tests include:
+  </p>
+  <ul>
+    <li>Directed tests for forwarding, load-use stalls at each distance, control flow, branch prediction and cache evictions.</li>
+    <li>Random programs biased toward short register dependencies and loads and stores that collide in the cache.</li>
+    <li>Unit tests, including 50,000 random accesses to the dcache checked against a reference memory.</li>
+    <li>A model of the SRAM chip that checks its timing rules on every simulation.</li>
+  </ul>
+
+  <h2>Results</h2>
+  <p>An insertion sort of 64 words, in simulation of the board at 50 MHz:</p>
+  <table>
+    <tr><th>Instructions retired</th><th>Cycles</th><th>CPI</th><th>Load-use stalls</th><th>Flushes</th><th>dcache misses</th></tr>
+    <tr><td>25,276</td><td>28,564</td><td>1.13</td><td>1,044</td><td>1,568</td><td>16</td></tr>
+  </table>
+  <p>
+    Before the caches were added, the board matched the simulation on every counter. The cached version has
+    passed simulation and timing and is waiting on its first comparison on the board.
+  </p>
+
+  <h2>What's next</h2>
+  <ul>
+    <li>A program loader over UART or JTAG, so programs aren't limited to the 8 KB preloaded with the FPGA image.</li>
+    <li>One shared address space for code and data.</li>
+    <li>Registering load data in MEM to shorten the critical path, which should allow 65&ndash;70 MHz.</li>
+    <li>Faster miss handling, such as a write-back buffer.</li>
+  </ul>
+
+  <h2>Tools</h2>
+  <p>Verilog, Icarus Verilog, Quartus II 13.0sp1, RISC-V GCC, Python, Tcl.</p>
+
+  <hr>
+  <p class="small"><a href="../index.html"> <- Back to home</a></p>
+
+</body>
+</html>

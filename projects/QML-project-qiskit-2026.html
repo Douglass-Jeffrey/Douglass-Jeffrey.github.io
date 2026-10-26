@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IBM Quantum Machine Learning Hackathon - Douglass Jeffrey</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+  <p class="small"><a href="../index.html">&lt;-Home</a></p>
+
+  <h1>IBM Quantum Machine Learning Hackathon</h1>
+  <p class="small">
+    Qiskit Fall Fest 2026 - University of Ottawa - Team project -
+    <a href="https://github.com/Douglass-Jeffrey/IBM_Qiskit_Quantum_Computing_Hackathon">GitHub</a> -
+    <a href="https://github.com/Douglass-Jeffrey/IBM_Qiskit_Quantum_Computing_Hackathon/blob/main/presentation/QM9%20Dipoles%20Quantum%20vs%20Classical%20FINAL%20(1).pdf">Presentation</a>
+  </p>
+
+  <figure>
+    <img src="../images/test_run01_learning_curves.png" width="1937" height="1347" alt="Four log-log plots of test error against number of training labels. The quantum models and their classical RBF twin overlap, while the best classical model keeps improving out to 100,000 labels.">
+    <figcaption>
+      Test-set error as the number of training labels grows (log&ndash;log). Top: mean absolute error; bottom:
+      root-mean-square error. Left: molecules whose formula appeared in training; right: formulas never seen.
+      Blue: quantum models on 10 qubits. Orange: their classical twin, RBF kernel ridge on the same 10 inputs,
+      which the blue lines overlap. Dashed black: the best classical model at each size. Dotted grey: always
+      predicting the mean.
+    </figcaption>
+  </figure>
+
+  <h2>Overview</h2>
+  <p>
+    The hackathon prompt was <i>"Learn molecular dipoles from fewer labels: how much reference data does a model
+    need to predict molecular polarity?"</i> Our team asked whether quantum machine learning models can match
+    classical ones on this regression task under identical conditions. We built quantum regression models in Qiskit,
+    compared each one with a classical counterpart given exactly the same inputs, data and tuning budget, and ran the
+    most hardware-friendly one on a 156-qubit IBM quantum processor (ibm_quebec).
+  </p>
+  <p>
+    A molecule's dipole moment measures how far apart its centres of positive and negative charge sit.
+    We used the QM9 dataset comprised of about 130000 small organic molecules whose dipoles were computed using
+    density functional theory. Every one of those labels costs an expensive quantum chemistry calculation,
+    so the question is how many a model needs to accurately predict the dipole moment, and whether quantum
+    kernel methods, which are often proposed for small-data problems, need fewer.
+  </p>
+  <p>
+    The models are only allowed to see each molecule's atomic numbers and 3D coordinates, and must give the same
+    answer when the molecule is rotated, moved, or has its atoms renumbered.
+  </p>
+
+  <h2>Process</h2>
+  <ol>
+    <li>Study the dataset, perform an exploratory data analysis to interpret the structure and properties of the
+        data.</li>
+    <li> Use the EDA results to feature engineer 188 total features, including bond geometry, functional groups, a
+        charge-equilibration dipole estimate, radial distributions and Coulomb-matrix eigenvalues.</li>
+    <li>Experimentally determine the optimal data scaling and compression scheme for features under different
+        training dataset sizes. Scale data and compress them to 10 inputs accordingly. </li>
+    <li>Encode each molecule's 10 inputs into a 10-qubit quantum circuit built with Qiskit, one input per qubit.</li>
+    <li>Read out the resulting quantum state in one of three ways, and use what comes out to predict the dipole's
+      magnitude in debye (D). Both steps are explained in the next section.</li>
+  </ol>
+
+  <h2>Implementation</h2>
+  <p> 
+    For our models, we chose to follow a hybrid quantum-classical approach using classical computing for analysis,
+    feature selection and compression, and quantum computing for the feature map, which transforms each molecule's
+    10 compressed inputs into a high-dimensional quantum state; the regression itself is then fit classically on what
+    is measured from those states. </p>
+  <p>
+    The feature map is a parameterized circuit U(x) whose rotation angles are set by a molecule's 10 PLS inputs x,
+    multiplied by a tuned angle scale &gamma;. Acting on <span style="white-space: nowrap">|0&hellip;0&rang;</span>,
+    it prepares the state
+    <span style="white-space: nowrap">|&psi;(x)&rang;</span> = <span style="white-space: nowrap">U(x)|0&hellip;0&rang;</span>,
+    a unit vector in the 2<sup>10</sup> = 1,024-dimensional Hilbert space of the register. Our main encoding is Qiskit's ZZ
+    feature map: Hadamard gates place every qubit in an equal superposition, single-qubit phase rotations write each
+    input into the phase of its qubit, and CNOT&ndash;phase&ndash;CNOT blocks write the product of neighbouring inputs into
+    their joint phase, which entangles them. The block is applied twice, and the circuit is drawn in the hardware section
+    below.
+  </p>
+  <p>
+    The important idea is that the circuit is a nonlinear transformation of the inputs. A linear model trained on the 10 PLS inputs can only
+    represent relationships that are linear in them. The amplitudes of <span style="white-space: nowrap">|&psi;(x)&rang;</span>,
+    on the other hand, depend on the inputs through products of sines and cosines of each input and of neighbouring pairs, so 
+    a model built on the state can represent curvature and interactions that the raw inputs cannot express linearly.
+    This is the quantum analogue of classical feature engineering (adding terms such as x<sup>2</sup>, xy or cos&nbsp;x)
+    and of classical kernels such as the Gaussian kernel, which implicitly map the inputs into an infinite-dimensional space
+    of smooth functions.
+  </p>
+  <!--
+  <p>
+    The reason we might expect a <i>different</i> answer from the quantum version is not nonlinearity itself, which
+    classical models already have, but the geometry of the quantum feature space. For larger and deeper circuits, the
+    overlaps between such states are believed to be intractable to compute classically (Havl&iacute;&ccaron;ek et al.,
+    2019), so a quantum feature map whose structure happened to match the problem could capture patterns that no
+    practical classical kernel reproduces. Nothing guarantees that match: the map is fixed and generic rather than
+    designed for chemistry. That is why every quantum model is compared with a classical model that receives exactly
+    the same inputs.
+  </p>
+  -->
+  <h3>Reading out the quantum state</h3>
+  <p>
+    We read the state out in three ways, each is a tradeoff of how much of the state each one uses against how many circuits a
+    device has to run.
+  </p>
+  <ul>
+    <li>
+      The fidelity quantum kernel, our main model, compares whole states. Kernel methods need only a similarity
+      k(x,&nbsp;x&prime;) for each pair of data points. Kernel ridge regression then predicts a new molecule's dipole
+      as a regularized weighted sum of its similarities to the training molecules. The quantum kernel is the fidelity
+      k(x,&nbsp;x&prime;) = <span style="white-space: nowrap">|&lang;&psi;(x)|&psi;(x&prime;)&rang;|<sup>2</sup></span>,
+      estimated on hardware by running U(x&prime;) followed by U(x)<sup>&dagger;</sup> and measuring the probability of
+      returning to <span style="white-space: nowrap">|0&hellip;0&rang;</span>. This lets the regression operate in the
+      full 1,024-dimensional state space without ever writing a state down, at the cost of one circuit per pair of molecules.
+    </li>
+    <li>
+      The projected quantum kernel compares reduced single-qubit states instead of whole states: each molecule is
+      described by its qubits' Bloch-vector components &lang;X&rang;, &lang;Y&rang; and &lang;Z&rang; (30 numbers), and a
+      classical Gaussian kernel is applied to those. It needs three circuits per molecule and is far
+      less prone to the concentration problem described below.
+    </li>
+    <li>
+      The &lang;Z&rang;-feature model uses the circuit as a feature generator: it outputs one expectation value per qubit, <span style="white-space: nowrap">&lang;Z<sub>i</sub>&rang; &isin; [&minus;1,&nbsp;1]</span>, giving 10 transformed features per molecule, and ridge regression is fit on them. It
+      needs one circuit per molecule. For this circuit each &lang;Z<sub>i</sub>&rang; has an exact closed form, a product
+      of cosines of the inputs and of neighbouring products, which makes the circuit's role explicit: the model is ridge
+      regression on a fixed nonlinear transformation of the PLS inputs.
+    </li>
+  </ul>
+  <p>
+    Every one of these quantities has to be estimated by measurement, because a quantum state is never read out
+    directly. Each execution ends in a measurement that returns a single bitstring, with probabilities given by the squared amplitudes, so overlaps and expectation values
+    come from averaging many repeated executions (shots). The statistical error shrinks as 1/&radic;shots, about
+    &plusmn;0.016 on a probability at 1,000 shots. Most of the team's work used exact statevector simulation through Qiskit.
+    Later we added finite-shot sampling, noise models built from IBM device calibrations, and one run
+    on real hardware.
+  </p>
+  <p>
+    To isolate what the quantum transformation contributes, each quantum kernel is paired with kernel ridge regression
+    using the Gaussian (RBF) kernel k(x,&nbsp;x&prime;) = exp(&minus;&gamma;&#8214;x&nbsp;&minus;&nbsp;x&prime;&#8214;<sup>2</sup>) on the same 10
+    inputs, and the &lang;Z&rang;-feature model with plain ridge regression on the untransformed inputs. These pairings
+    pose a precise question: does the quantum transformation add anything beyond what a standard classical
+    transformation of the same data already provides?
+  </p>
+
+  <h2>Keeping the comparison fair</h2>
+  <p>
+    We employed a couple different measures in order to keep the comparison between quantum and classical models fair.
+  </p>
+  <ul>
+    <li>Each quantum kernel and its RBF twin share inputs, training sets,
+      cross-validation folds, selection metric and grid size (88 candidate settings each), and are tuned by the same code,
+      which reproduces the classical results exactly when handed the RBF kernel. All hyperparameters (angle scale,
+      bandwidth, ridge penalty) are selected by 5-fold cross-validation inside each training set, so any difference in
+      accuracy is attributable to the kernel itself.</li>
+    <li>A product-state circuit with no entangling gates, whose fidelity kernel reduces to a classical product of
+      cosines, is used as entanglement control, isolating what entanglement contributes.</li>
+      <!--
+    <li>The most accurate classical model at each training size, up to all 99,198 training molecules and including a
+      latent-charge neural network, serves as a best-case reference for how far classical methods go
+      without the quantum models' constraints.</li>
+      -->
+    <li>Every model is scored both on molecules whose chemical formula occurs in training and, as an out-of-distribution test, on
+      16,818 molecules from 93 formulas held out of all training data.</li>
+  </ul>
+
+  <h2>Results</h2>
+  <p>
+    Every model was trained on N = 100, 300 and 1,000 molecules (three random training sets at each size, the same
+    ones for every model) and scored on held-out test molecules: 5,484 whose chemical formula appears somewhere in
+    the training data, and, in the last column, 16,818 whose formula never does. The numbers are the mean absolute
+    error (MAE) of the predicted dipole in debye (D), averaged over the three training sets; lower is better. For
+    scale, a typical molecule's dipole is about 2.5 D.
+  </p>
+  <p>
+    All the quantum models, and their classical twin, see the same 10 inputs: the 188 features compressed by partial
+    least squares, one input per qubit.
+  </p>
+  <div class="table-scroll">
+  <table>
+    <tr><th>Model</th><th>What it does</th><th>N&nbsp;=&nbsp;100</th><th>N&nbsp;=&nbsp;300</th><th>N&nbsp;=&nbsp;1,000</th><th>N&nbsp;=&nbsp;1,000, unseen chemical formulas</th></tr>
+    <tr><th colspan="6">Quantum models (10 qubits)</th></tr>
+    <tr><td><b>Quantum kernel ridge</b> (main model)</td><td>Scores how similar two molecules are by the overlap of their quantum states (ZZ feature map), then fits kernel ridge regression. One circuit per pair of molecules.</td><td>0.735</td><td>0.578</td><td><b>0.492</b></td><td><b>0.437</b></td></tr>
+    <tr><td>No-entanglement control</td><td>The same model on a circuit with no entangling gates: a classical kernel written as a quantum circuit.</td><td>0.732</td><td>0.578</td><td>0.490</td><td>0.433</td></tr>
+    <tr><td>Projected quantum kernel</td><td>Compares molecules by each qubit's measured X, Y and Z values instead of the full state. Three circuits per molecule.</td><td>0.724</td><td>0.578</td><td>0.493</td><td>0.440</td></tr>
+    <tr><td>&lang;Z&rang;-feature ridge</td><td>Fits a linear model on one Z measurement per qubit. One circuit per molecule, so the cheapest to run; this is the model we ran on IBM hardware.</td><td>0.731</td><td>0.597</td><td>0.545</td><td>0.493</td></tr>
+    <tr><th colspan="6">Classical comparisons</th></tr>
+    <tr><td><b>Classical twin</b></td><td>Standard kernel ridge regression with a Gaussian (RBF) kernel, on the same 10 inputs, training sets, folds and tuning budget as the quantum models.</td><td>0.730</td><td>0.578</td><td><b>0.490</b></td><td><b>0.433</b></td></tr>
+    <tr><td>Plain ridge (linear)</td><td>Ordinary linear ridge regression on the same 10 inputs, with no kernel and no circuit: the baseline for what nonlinearity adds, and the direct counterpart of the &lang;Z&rang;-feature model.</td><td>0.730</td><td>0.588</td><td>0.509</td><td>0.452</td></tr>
+    <tr><td>Best classical model</td><td>The most accurate classical model at each size, free to use any inputs: XGBoost at 100, kernel ridge on all 188 features at 300, and a charge network at 1,000.</td><td>0.653</td><td>0.550</td><td>0.280</td><td>0.276</td></tr>
+    <tr><td>Predict the mean</td><td>Always predicts the average dipole of the training set: the baseline to beat.</td><td>1.156</td><td>1.142</td><td>1.138</td><td>1.254</td></tr>
+  </table>
+  </div>
+  <p>
+    The bold rows are the comparison we are most interested in, the main quantum model against its classical twin. At 1,000 molecules
+    the quantum model trails by just 0.001 D on familiar formulas and 0.004 D on new ones, while each model's score
+    varies by about 0.01 D from one training set to another, so the two models perform similarly.
+  </p>
+  <p>
+    Comparing against the plain ridge regression shows where the gains come from. At 300 and 1,000 molecules every
+    kernel model improves on it, quantum or classical, and by the same amount. At 1,000 molecules plain ridge scores
+    0.509 D, the quantum kernel 0.492 D and the classical RBF kernel 0.490 D. The no-entanglement control, a classical
+    kernel written as a circuit, improves just as much, so the gain comes from the kernel's nonlinearity rather than from
+    anything quantum. Passing the inputs through the circuit before a linear fit, as the &lang;Z&rang;-feature model does,
+    makes it slightly worse (0.545 D), and at 100 molecules no model does measurably better than plain ridge.
+  </p>
+
+  <p>
+    Additionally as data grows, the best classical model pulls far ahead. While not displayed in the table, our charge neural
+    network reaches 0.040 D with all 99,198 training labels, 28&times; better than predicting the mean.
+  </p>  
+
+  <h2>Why the quantum kernels tie</h2>
+  <p>
+    The decisive hyperparameter is the angle scale &gamma;, which plays the role of a kernel bandwidth. At N = 1,000,
+    grid search CV selected the smallest value in the grid for every training set, and that choice explains the tie.
+  </p>
+  <p>
+    At small angle scales the quantum kernel behaves classically. Every state stays close to the same reference state, so
+    all fidelities are close to 1 and vary smoothly and approximately quadratically with the distance between inputs. This
+    mirrors the behaviour of a wide Gaussian kernel. The fitted models confirm this as they use the same effective number of parameters
+    (71.4 for the quantum kernel, 71.7 for the RBF kernel), and their kernel eigenspectra coincide, both dominated by the
+    constant, linear and quadratic functions of the 10 inputs. In this regime the quantum kernel is effectively a
+    classical, low-order polynomial smoother.
+  </p>
+  <p>
+    At large angle scales the opposite problem appears, known as exponential concentration. As &gamma; grows, the
+    states spread over the 1,024-dimensional Hilbert space and become nearly orthogonal. Off-diagonal fidelities collapse toward zero and their variance vanishes,
+    exponentially fast in the number of qubits
+    (<a href="https://doi.org/10.1038/s41467-024-49287-w">Thanasilp et al., 2024</a>). The kernel matrix approaches the identity, every
+    molecule looks equally dissimilar to every other, and the model cannot generalize.
+  </p>
+  <p>
+    The quantum kernel is caught between a regime in which it generalizes but is classically reproducible and
+    a regime in which it is "more quantum" but uninformative. This matches published studies of the same family
+    of circuits: tuning the angle scale works like tuning a classical kernel's bandwidth
+    (<a href="https://doi.org/10.1103/PhysRevA.106.042407">Shaydulin &amp; Wild, 2022</a>), and quantum kernels tuned to
+    generalize become well approximated by classical kernels
+    (<a href="https://doi.org/10.1103/PhysRevA.107.062417">Slattery et al., 2023</a>). The entanglement control agrees, as we found that removing every
+    entangling gate leaves the accuracy unchanged.
+  </p>
+  <figure>
+    <img src="../images/qml-kernel-concentration.png" width="1600" height="452" alt="Three plots against the angle scale gamma: the mean and spread of off-diagonal kernel values and the kernel-target alignment, collapsing at large angles, faster with more qubits">
+    <figcaption>
+      Kernel statistics against the angle scale &gamma;: mean (left) and standard deviation (middle) of the off-diagonal
+      kernel entries, and kernel&ndash;target alignment (right), for the fidelity kernel (solid) and the projected kernel
+      (dashed) on 4, 10 and 16 qubits. The vertical line marks the &gamma; selected by cross-validation. Beyond it the
+      fidelity kernel concentrates, faster with more qubits, and its alignment with the target collapses.
+    </figcaption>
+  </figure>
+
+  <h2>Running on IBM hardware</h2>
+  <p>
+    The fidelity kernel was too complex to run on IBM quantum hardware, requiring one circuit per pair of molecules or about 5&times;10<sup>5</sup>
+    circuits just to train on 1,000 molecules. The &lang;Z&rang;-feature model needs only one circuit per molecule, so it
+    was feasible to execute on the <code>ibm_quebec</code> QPU, using 10 of its qubits.
+  </p>
+  <figure>
+    <img src="../images/qml-circuit.png" width="2654" height="1310" alt="Quantum circuit diagram on four qubits: Hadamard gates, phase gates set by each input, CNOT-phase-CNOT blocks between neighbouring qubits, the same block repeated, and a measurement on every qubit">
+    <figcaption>
+      The ZZ feature map, drawn on 4 qubits for readability (the executed circuit has 10). Hadamard gates (H) create a
+      uniform superposition; phase gates P(2x<sub>i</sub>) encode each input, where x<sub>i</sub> is the i-th PLS input
+      times the angle scale; each CNOT&ndash;P&ndash;CNOT block applies a ZZ interaction between neighbouring qubits whose
+      phase depends on the product of their inputs, entangling them. The block is applied twice, and every qubit is then
+      measured in the computational (Z) basis.
+    </figcaption>
+  </figure>
+  <p>
+    For each molecule, the circuit was bound to its 10 inputs and transpiled to the processor's native
+    gate set and qubit connectivity. The transpiled circuit was 109 layers deep with 36 two-qubit gates.
+    We executed the circuits for the 100 molecules of the training set and 60 test molecules
+    (160 circuits at 1,000 shots each) and estimated every &lang;Z<sub>i</sub>&rang; from the measured
+    bit frequencies, giving each molecule's 10 quantum features.
+  </p>
+  <p>
+    The ridge readout was then refit classically on the training molecules' feature map outputs 
+    with the angle scale and penalty selected by cross-validation in simulation, and evaluated
+    on the device-measured features of the test molecules.
+  </p>
+  <p>
+    On ibm_quebec the model reached an MAE of 0.778 D, against 0.794 D in exact simulation of the same
+    circuits and molecules, 0.816 D with simulated shot noise, and 0.81 D and 0.80 D under the FakeFez and FakeQuebec noise
+    models. Errors are higher than in the results table because this run trained on only 100 molecules. With 60 test
+    molecules each MAE carries an uncertainty of about &plusmn;0.1 D, so the hardware reproduced the simulation within
+    sampling error rather than outperforming it.
+  </p>
+  <figure>
+    <img src="../images/qml-hardware-comparison.png" width="1348" height="907" alt="Bar chart of mean absolute error for the same 60 test molecules in exact simulation, with simulated shot noise, under two IBM noise models, and on the ibm_quebec device, all between 0.78 and 0.86 D">
+    <figcaption>
+      The same 60 test molecules scored in exact simulation, with simulated shot noise, under the FakeFez and FakeQuebec
+      noise models, and on the <code>ibm_quebec</code> device (dark bar). The top five bars are the &lang;Z&rang;-feature
+      model (labelled "quantum-feature ridge"); the lower bars are the projected kernel, which we ran in simulation only.
+    </figcaption>
+  </figure>
+
+    <h2>Results</h2>
+  <p>
+    We placed second in the competition, while learning a considerable amount about quantum machine learning and quantum computing hardware, and a little about chemistry.
+  </p>
+  <h2>What we would do if we had more time</h2>
+  <ul>
+    <li>We ran only the simplest model on a real device. The natural next step is to train and test a more complex one
+      on quantum hardware, such as the projected kernel or a version of the main quantum kernel tuned to cope with shot
+      noise, together with error-mitigation techniques that reduce the effect of hardware noise.</li>
+    <li>We only tried kernel methods and a linear model. Other types of quantum models and architectures, such as
+      splines, ensembles of models or tree-based models, could use the quantum circuit in different ways.</li>
+    <li>All our circuits used fixed encodings of the same 10 numbers. Different quantum encodings and feature sets, such
+      as the per-atom information the best classical model uses, other circuit designs, or encodings trained to fit the
+      data, could behave very differently.</li>
+    <li>A more intuitive understanding of the chemistry, of what the features mean and how they relate to one another,
+      would help us design more robust features and models.</li>
+  </ul>
+
+  <h2>Tools</h2>
+  <p>Python, Qiskit, Qiskit Aer, IBM Quantum, NumPy, SciPy, scikit-learn, XGBoost, pandas, Matplotlib, many more that I'm probably forgetting </p>
+
+  <hr>
+  <p class="small"><a href="../index.html"> <- Back to home</a></p>
+
+</body>
+</html>

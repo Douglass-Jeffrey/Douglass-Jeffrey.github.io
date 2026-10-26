@@ -1,0 +1,57 @@
+html { color-scheme: dark; }
+body {
+  max-width: 1000px;
+  margin: 40px auto;
+  padding: 0 15px;
+  font-family: Verdana, Geneva, Tahoma, sans-serif;
+  line-height: 1.5;
+  color: #d4d4d4;
+  background: #1e1e1e;
+}
+h1 { margin-bottom: 0; }
+h2 { border-bottom: 1px solid #3c3c3c; padding-bottom: 3px; margin-top: 30px; }
+a { color: #3794ff; }
+.small { color: #9d9d9d; font-size: 0.9em; }
+li { margin-bottom: 8px; }
+hr { border: 0; border-top: 1px solid #3c3c3c; }
+
+/* Project cards on the home page */
+.project { display: flex; gap: 20px; align-items: flex-start; margin: 20px 0 30px; }
+.project img {
+  width: 260px;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+}
+.project h3 { margin: 0; }
+.project p { margin: 4px 0 8px; }
+
+/* TODO(human): on a phone-width screen the 260px image leaves the text a very
+   narrow column beside it. Add a @media rule here that changes how .project
+   lays out below some screen width. */
+
+/* Project write-up pages */
+figure { margin: 25px 0; }
+figure img, figure video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+}
+figcaption { color: #9d9d9d; font-size: 0.9em; margin-top: 6px; }
+table { border-collapse: collapse; margin: 15px 0; font-variant-numeric: tabular-nums; }
+th, td { border: 1px solid #3c3c3c; padding: 5px 10px; text-align: left; }
+th { background: #252526; }
+/* Wide tables keep a readable width and scroll sideways on narrow screens instead of widening the page. */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 820px; }
+code { font-family: Consolas, "Courier New", monospace; background: #2d2d2d; padding: 1px 4px; border-radius: 3px; }
+/* Displayed equations scroll sideways on narrow screens; .frac stacks a numerator over a denominator. */
+.eq { margin: 15px 0; text-align: center; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
+.frac { display: inline-block; vertical-align: middle; text-align: center; }
+.frac > span { display: block; padding: 0 4px; }
+.frac > span + span { border-top: 1px solid currentColor; }

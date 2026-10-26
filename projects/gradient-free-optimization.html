@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gradient-Free Optimization on GPUs - Douglass Jeffrey</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+  <p class="small"><a href="../index.html"> <- Douglass Jeffrey</a></p>
+
+  <h1>Gradient-Free Optimization on GPUs</h1>
+  <p class="small">
+    Personal project - 2026 -
+    <a href="https://github.com/Douglass-Jeffrey/gradient_free_optimization">GitHub</a>
+  </p>
+
+  <figure>
+    <img src="../images/gfo-cbo-run.png" width="1182" height="840" alt="Particles on the Rastrigin function contracting over time from a wide spread onto the global minimum at the origin">
+    <figcaption>
+      A CBO run on the 2D Rastrigin function, which has a local minimum at every integer point and its global
+      minimum at the origin. The swarm (N = 400, &lambda; = 1, &sigma; = 0.8, &beta; = 30) contracts past the local
+      minima and settles at the origin.
+    </figcaption>
+  </figure>
+
+  <h2>Overview</h2>
+  <p>
+    Gradient descent needs derivatives, and many real objectives don't have useful ones: they're noisy,
+    non-differentiable, or full of local minima. This project explores optimizers that only ever evaluate the
+    function, and how to make them fast on parallel hardware. Running thousands of independent function
+    evaluations at once is exactly what GPUs are good at.
+  </p>
+  <p>
+    The first method is <b>consensus-based optimization (CBO)</b>, written in CuPy. The longer-term goal is
+    hardware-specific versions for CUDA and ROCm GPUs plus an OpenCL version, to compare how the same algorithm
+    performs across platforms.
+  </p>
+
+  <h2>How CBO works</h2>
+  <p>
+    A swarm of particles explores the search space. At each step the swarm agrees on a <b>consensus point</b>:
+    a weighted average of the particle positions, where each particle's weight is
+    <code>exp(-&beta; f(x))</code>. Particles with lower objective values count for far more, and as &beta; grows
+    the consensus point approaches the best particle.
+  </p>
+  <p>Each particle then takes a step:</p>
+  <ul>
+    <li><b>Drift</b> toward the consensus point, at rate &lambda;.</li>
+    <li><b>Noise</b> scaled by its distance from the consensus point, with strength &sigma;. Particles far away
+      explore widely, and particles close by barely move, so the swarm collapses once it agrees.</li>
+  </ul>
+  <p>
+    For a quadratic objective, theory predicts the swarm's spread shrinks at rate 2&lambda; &minus; &sigma;&sup2;.
+    The project includes a sweep over &lambda; and &sigma; that measures the actual rate and compares it to that prediction.
+  </p>
+
+  <h2>Implementation</h2>
+  <ul>
+    <li>Particle positions are stored with one row per coordinate and one column per particle, so the sums over
+      particles read memory contiguously on the GPU.</li>
+    <li>The consensus weights subtract the best objective value before exponentiating, so large &beta; doesn't
+      underflow every weight to zero.</li>
+    <li>The particle update is fused into a single GPU kernel, so each position is read and written once per step.</li>
+    <li>Configurations are checked against the stability limit of the time-stepping scheme before a run starts.</li>
+    <li>Measurement code is kept out of the optimizer and attached separately, so benchmarks time only the optimizer.</li>
+    <li>Test functions: Ackley, Rastrigin, Rosenbrock and a simple quadratic.</li>
+  </ul>
+
+  <h2>What's next</h2>
+  <ul>
+    <li>Hand-written CUDA kernels, then ROCm and OpenCL versions.</li>
+    <li>Benchmarks of each version on the same problems and hardware.</li>
+    <li>More gradient-free methods.</li>
+  </ul>
+
+  <h2>Tools</h2>
+  <p>Python, CuPy, NumPy, SciPy, Matplotlib.</p>
+
+  <hr>
+  <p class="small"><a href="../index.html"> <- Back to home</a></p>
+
+</body>
+</html>

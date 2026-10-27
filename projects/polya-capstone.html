@@ -8,12 +8,13 @@
 </head>
 <body>
 
-  <p class="small"><a href="../index.html"> <-Home</a></p>
+  <p class="small"><a href="../index.html">&lt;-Home</a></p>
 
   <h1>P&oacute;lya Contagion on Large Networks</h1>
   <p class="small">
     MTHE 493 Capstone - Queen's University - 2026 -
-    <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks">Code on GitHub</a>
+    <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks">GitHub</a> -
+    <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks/blob/optimization/docs/MTHE_493___Thesis.pdf">Thesis</a>
   </p>
 
   <figure>
@@ -21,94 +22,351 @@
       <source src="../images/capstone-animation.mp4" type="video/mp4">
     </video>
     <figcaption>
-      The P&oacute;lya process running on a grown network with the injection intervention, rendered in Gephi.
-      Nodes turn red as their urns fill with red balls; the inset histogram shows how the fraction of red
-      balls is spread across all the urns.
+      A networked P&oacute;lya process on a grown degree-1 Barab&aacute;si&ndash;Albert network with direct-injection
+      intervention executed at timestep 144. Nodes turn red as their red ball proportion passes 80%. The histogram shows how
+      the fraction of red balls is spread across all the urns.
     </figcaption>
   </figure>
 
   <h2>Overview</h2>
   <p>
-    A P&oacute;lya urn is a simple model of contagion: draw a ball, put it back along with more balls of the
-    same colour, and whatever is common becomes more common. Put an urn at every node of a network and have
-    each node draw from a "super urn" made of its own urn and its neighbours', and you get a model of how an
-    idea or an infection spreads through a population.
+    My undergraduate thesis studied the networked finite-memory P&oacute;lya process on large scale-free
+    networks. It explored consensus mechanics for the process on graphs with millions of nodes and
+    compared strategies for influencing consensus.
   </p>
   <p>
-    For my capstone I wanted to run this process on networks big enough to look like real social networks,
-    and then test strategies for steering it by intervening at the most connected nodes. Most of the work
-    turned out to be making the simulation fast enough to do that at tens of millions of nodes.
+    I designed and implemented a simulation and data analysis framework to study the behaviour of these processes under varying constraints
+    of network density and scale, process memory and information dissemination, and intervention vectors.
+    The main technical challenge was computational. The initial implementation was limited to sparse networks of around one thousand nodes,
+    whereas the final implementation can simulate dense networks in the range of 10<sup>8</sup> nodes.
   </p>
 
-  <h2>How it works</h2>
+  <h2>Model Background</h2>
+  <h3>The P&oacute;lya urn</h3>
+  <p>
+    An urn starts with R red and B black balls. At each step one ball is drawn at random and returned along with &Delta;
+    more of the same colour. The fraction of red balls is a martingale and converges to a random limit with a Beta(R/&Delta;,&nbsp;B/&Delta;)
+    distribution. The urn always settles, but where it settles is decided mostly by the first few draws, when each ball is a large share of the urn.
+  </p>
+
+  <h3>Networked P&oacute;lya Process</h3>
+  <p>
+    In the networked P&oacute;lya Process (<a href="https://doi.org/10.1109/TCNS.2017.2781467">Hayhoe, Alajaji &amp; Gharesifard,
+    2018</a>), each node in a graph has its own P&oacute;lya urn with R<sub>i</sub> red and B<sub>i</sub> black balls. Let N<sub>i</sub> be node
+    i's neighbours together with i itself. At each step, every node draws concurrently from its "super urn" comprised of the union of the red and black balls
+    of all nodes in N<sub>i</sub>. So it draws red with probability
+  </p>
+  <p class="eq">
+    P(Z<sub>i,n</sub> = 1) =
+    <span class="frac"><span>&Sigma;<sub>j&isin;N<sub>i</sub></sub> R<sub>j</sub></span><span>&Sigma;<sub>j&isin;N<sub>i</sub></sub> (R<sub>j</sub> + B<sub>j</sub>)</span></span>
+  </p>
+  <p>
+    and &Delta; balls of the drawn colour go into node i's own urn.
+    <!--
+    The implementation rests on writing this in matrix
+    form. If U<sub>n</sub> is the N&times;2 matrix whose rows are the urns (red count, black count) and A is the network's
+    adjacency matrix, every super urn at once is
+  </p>
+  <p class="eq">S<sub>n</sub> = (A + I) U<sub>n</sub></p>
+  <p>
+    All nodes draw simultaneously from the state at step n, so their draws are independent given U<sub>n</sub>. A whole
+    step is one sparse matrix product, one random number per node and an addition, with nothing forcing nodes to be
+    processed in order.
+  -->
+  </p>
+
+  <h3>Finite memory</h3>
+  <p>
+    In the finite-memory variant of the process
+    (<a href="https://doi.org/10.1109/18.340476">Alajaji &amp; Fuja, 1994</a>), each ball added by a draw is
+    removed M steps later. With &Delta;&nbsp;=&nbsp;1, once the first M steps have passed, the proportion
+    of red balls in an urn that started with R<sub>0</sub> red and B<sub>0</sub> black balls is
+  </p>
+  <p class="eq">
+    <span class="frac"><span>R<sub>0</sub> + Z<sub>n&minus;M+1</sub> + &hellip; + Z<sub>n</sub></span><span>R<sub>0</sub> + B<sub>0</sub> + M</span></span>
+  </p>
+  <p>
+    where Z<sub>t</sub> is 1 if the draw at step t was red and 0 otherwise. 
+    <!--We used M = 72, and every urn starts with one ball of each colour, so each urn settles at exactly 74 balls.
+    Following the contagion literature, red balls represent infection, and a node is classified as infected when at least 80%
+    of its urn is red (60 or more red balls), and the network reaches consensus when 80% of nodes are infected. Unlike the
+    classic urn, this one cannot lock in. Its red fraction moves on the grid k/74, and a node that stops drawing red loses
+    its red bias within M steps, so infection has to be sustained by the node's neighbourhood.
+  -->
+  </p>
+
+  <h2>Network types</h2>
+  <h3>Barab&aacute;si&ndash;Albert networks</h3>
+  <p>
+    Many real networks are scale-free, meaning most nodes have few connections while a
+    small number are hubs with many connections. The Barab&aacute;si&ndash;Albert model
+    (<a href="https://doi.org/10.1126/science.286.5439.509">Barab&aacute;si &amp; Albert, 1999</a>) produces this by
+    preferential attachment. Starting from a fully connected core of m<sub>0</sub> nodes, each new node makes m
+    connections, attaching to an existing node i with probability
+  </p>
+  <p class="eq">
+    &Pi;<sub>i</sub> = <span class="frac"><span>k<sub>i</sub></span><span>&Sigma;<sub>j</sub> k<sub>j</sub></span></span>
+  </p>
+  <p>
+    where k<sub>i</sub> is node i's degree. The well connected become better connected, which gives a power-law degree
+    distribution, P(k)&nbsp;&prop;&nbsp;k<sup>&minus;3</sup>. Larger m means a denser graph with shorter paths between
+    nodes.
+  </p>
+
+  <h3>Switch networks</h3>
+  <p>
+    A switch, or threshold, graph is built by adding nodes that are either dominating (connected to every node already
+    present) or isolated (connected to none), chosen by a coin flip or by a draw from a separate P&oacute;lya urn. A
+    dominating node enters the super urn of every node it attaches to, which is the basis of the first intervention
+    strategy below. Switch networks are extremely dense, since a dominating node at position n brings n edges, yet they can
+    be simulated without storing a single edge (see below).
+  </p>
+
+  <h2>Interventions</h2>
+  <p>
+    We compared two ways of pushing the network toward a red consensus, both aimed at its most central nodes.
+  </p>
   <ul>
     <li>
-      <b>Everything is vectorized.</b> The urns are one array with a row per node, and the network is a
-      sparse (CSR) matrix. A P&oacute;lya step is a sparse matrix product to build every super urn at once,
-      one random draw per node, and an add, with no Python loops over nodes. It runs on the GPU through
-      CuPy and falls back to NumPy/SciPy on the CPU.
+      <b>Switch-network intervention.</b> At each step, with probability p(t), add intervention nodes whose urns hold r
+      red balls and no black ones, each wired to c of the highest-degree nodes, so that each acts as a dominating node
+      restricted to the network's hubs. For each targeted node i, the new urn joins the super urn:
+      <div class="eq">
+        P<sub>i</sub>(red) =
+        <span class="frac"><span>r + &Sigma;<sub>j&isin;N<sub>i</sub></sub> R<sub>j</sub></span><span>r + &Sigma;<sub>j&isin;N<sub>i</sub></sub> (R<sub>j</sub> + B<sub>j</sub>)</span></span>
+      </div>
     </li>
     <li>
-      <b>Switched networks in one bit per node.</b> In switched-network growth each new node either connects
-      to every earlier node or to none of them, decided by a Bernoulli trial. That means the whole graph can
-      be stored as a single bit per node instead of an adjacency matrix. With that representation a
-      1-billion-node network runs on a desktop CPU with 32 GB of RAM at about 200 seconds per P&oacute;lya step.
-    </li>
-    <li>
-      <b>Batched Barab&aacute;si&ndash;Albert growth.</b> To model social networks, nodes attach preferentially
-      to already well-connected nodes. Sampling from a list of edge endpoints, where each node appears once
-      per connection, is the same as sampling by degree, so it can be done in large vectorized batches.
-      Batches that grow exponentially in size were the fastest.
-    </li>
-    <li>
-      <b>Interventions.</b> Two strategies target the highest-degree nodes. The first adds new red-biased
-      nodes wired to them. The second injects balls straight into their urns, which avoids rebuilding the
-      sparse graph between steps. There is also a variant that ranks nodes by eigenvector centrality,
-      computed with power iteration.
+      <b>Direct injection.</b> At a chosen step, add r red balls, exempt from memory, to the urn of each of the k most
+      central nodes. Degree centrality refers to the number of direct connections for a particular node, and eigenvector centrality refers to the solution
+      to Ax&nbsp;=&nbsp;&lambda;x for the largest eigenvalue &lambda;, which scores each node by its neighbours' scores. Both centrality measures were 
+      simulated and analyzed.
     </li>
   </ul>
 
-  <h2>Results</h2>
+  <h2>Network design and computational optimization</h2>
+  <p>
+    The initial implementation represented each node and each urn as a Python object, and it is the baseline against
+    which the optimizations below are measured. Each is given with its effect on running time and memory, either measured
+    in the benchmarks or calculated directly, for a network of N nodes and E undirected edges.
+  </p>
   <figure>
-    <img src="../images/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over Polya process steps, with most nodes moving to nearly all red by about step 400">
+    <img src="../images/capstone-small-benchmark.png" width="1000" height="600" alt="Log-scale plot of total time against number of nodes from 128 to 32,768, in which the original implementation climbs to about 500 seconds, the vectorized GPU version to about 6 seconds and the vectorized CPU version to under a second">
     <figcaption>
-      Each column is one P&oacute;lya step, and the colour shows what fraction of nodes have a given proportion
-      of red balls. Starting from mixed urns, most of the network converges to nearly all red by around step 400.
+      Time to grow a Barab&aacute;si&ndash;Albert graph and run 100 P&oacute;lya steps (log&ndash;log). Green: the initial
+      implementation. Blue and orange: the final implementation on the CPU (about 740&times; faster at 32,768 nodes) and
+      GPU. The GPU trails here only because this benchmark grows the graph 8 nodes at a time.
     </figcaption>
   </figure>
 
+  <h3>Array state and sparse super urns</h3>
   <p>
-    I benchmarked the full pipeline (growing the network, building the sparse matrix, and running 100
-    P&oacute;lya steps) on my desktop's Ryzen 3 3100 and GTX 1660 Ti, and on an 80 GB A100 in Google Colab:
+    The initial implementation assembled each super urn through Python calls to the node's neighbours. This is
+    O(N&nbsp;+&nbsp;E) work per step, but each unit is an interpreted function call, and every step allocates N
+    temporary super-urn objects. The optimized implementation stores the urns as an N&times;2 integer matrix U and the network
+    as a compressed sparse row (CSR) adjacency matrix A, so that all super urns are given by one matrix product,
   </p>
+  <p class="eq">S = (A + I)U,</p>
+  <p>
+    followed by O(N) element-wise operations for the draws and the urn update. All nodes draw from the state at the start
+    of the step, so the N draws are independent given U, and each operation runs as a data-parallel CUDA kernel over
+    every node. At 32,768 nodes a step fell from 416&nbsp;ms to 3.5&nbsp;ms on the CPU, a 119x speedup. At 8.9 million
+    nodes the GTX 1660 Ti completes a step in 0.09&nbsp;s, against 1.6&nbsp;s on the CPU, an 18x speedup.
+  </p>
+  <p>
+    The object representation used about 1&nbsp;KB per node at an average degree of six. CSR stores 8 bytes per edge entry
+    (a 32-bit column index and a 32-bit value, with each undirected edge stored in both directions) and a 4-byte row
+    pointer per node, which is O(N&nbsp;+&nbsp;E) rather than the O(N<sup>2</sup>) of a dense adjacency matrix. At 71.6
+    million nodes the CSR matrix occupies 3.7&nbsp;GB, where a dense matrix would need 640&nbsp;TB even at one bit per
+    entry, and the whole simulation uses 9.6&nbsp;GB, about 135 bytes per node. At 1&nbsp;KB per node, the object
+    representation would have needed about 75&nbsp;GB.
+  </p>
+
+  <h3>Switch networks without stored edges</h3>
+  <p>
+    A dominating node at position j is connected to all j earlier nodes, so a switch network in which each node is
+    dominating with probability p has about pN<sup>2</sup>/2 edges. At N&nbsp;=&nbsp;10<sup>9</sup> and
+    p&nbsp;=&nbsp;0.01 this is 5&times;10<sup>15</sup> edges, or 80&nbsp;PB in CSR. The network is, however, determined entirely
+    by one boolean per node, where s<sub>j</sub>&nbsp;=&nbsp;1 if node j is dominating, because nodes i&nbsp;&lt;&nbsp;j are
+    adjacent exactly when s<sub>j</sub>&nbsp;=&nbsp;1. Node i's super urn is therefore its own urn, the urns of all later dominating
+    nodes, and, if i is itself dominating, the urns of all earlier nodes:
+  </p>
+  <p class="eq">
+    S<sub>i</sub> = U<sub>i</sub> + &Sigma;<sub>j&gt;i</sub> s<sub>j</sub>U<sub>j</sub> + s<sub>i</sub> &Sigma;<sub>j&lt;i</sub> U<sub>j</sub>
+  </p>
+  <p>
+    Both sums are prefix sums over the urn matrix. Storage falls from O(pN<sup>2</sup>) to O(N), 1&nbsp;GB of flags at
+    10<sup>9</sup> nodes, and the work per step falls by a factor of pN/2&nbsp;=&nbsp;5&times;10<sup>6</sup>. With
+    32&nbsp;GB of RAM, a one-billion-node switch network ran on a desktop CPU at about 200 seconds per step.
+  </p>
+
+  <h3>Barab&aacute;si&ndash;Albert growth</h3>
+  <p>
+    The initial implementation computed attachment probabilities over all n existing nodes for each new node, a total of
+    &Sigma;<sub>n&lt;N</sub>&nbsp;n&nbsp;&asymp;&nbsp;N<sup>2</sup>/2 operations. Growth was therefore O(N<sup>2</sup>),
+    which took 434 seconds at 32,768 nodes. Two changes reduce the cost to O(mN), which is linear in the number of edges.
+  </p>
+  <p>
+    The first is a stub list, an array of edge endpoints in which node i appears k<sub>i</sub> times. A uniformly random
+    entry is node i with probability k<sub>i</sub>&nbsp;/&nbsp;&Sigma;<sub>j</sub>&nbsp;k<sub>j</sub>, which is exactly the
+    attachment rule, so each of a new node's m targets is drawn in O(1) time without recomputing any probabilities. The
+    second is batching, in which a batch of new nodes samples all of its targets at once from the same snapshot of the
+    graph and any node that draws a target twice resamples. This reduces the number of sequential iterations from N to the number of
+    batches. The 10,553,408-node network used in the analysis section of the thesis was grown in 896 batches,
+  </p>
+  <p class="eq">64 + 256&times;8 + 256&times;256 + 256&times;8,192 + 128&times;65,536 = 10,553,408,</p>
+  <p>
+    about 11,800 nodes per batch on average. At 17.9 million nodes the batched sampling takes
+    4.9&nbsp;s on the CPU, 1.5&nbsp;s on the GTX 1660 Ti (3.2x) and 0.6&nbsp;s on an A100 (7.7x). On the GPUs the build
+    time is then dominated by conversion of the edge list to CSR, which the simulator performs on the host above
+    10<sup>6</sup> edges to stay within the 1660 Ti's 6&nbsp;GB of VRAM. At 71.6 million nodes, for example, the A100
+    samples the graph in 1.5&nbsp;s and spends a further 27.8&nbsp;s on the conversion.
+  </p>
+  <!--
+  <h3>Finite memory</h3>
+  <p>
+    Removing each ball M steps after it was added requires the colours of every node's last M draws, MN bits in total.
+    The simulator keeps them in an M&times;N ring buffer. At step n, row n&nbsp;mod&nbsp;M holds the draws from step
+    n&nbsp;&minus;&nbsp;M, which are subtracted from the urns before the row is overwritten with the current draws. Removal
+    is therefore a single O(N) operation per step, independent of M, and needs no per-ball timestamps. Stored as 32-bit
+    integers, the buffer occupies 4MN bytes, or 3.0&nbsp;GB at 10.5 million nodes with M&nbsp;=&nbsp;72. Since each entry
+    is a single bit, packing would reduce it 32-fold, to 95&nbsp;MB.
+  </p>
+  -->
+  <h3>Interventions</h3>
+  <p>
+    An intervention node changes the graph. Each intervention event extends the urn, reinforcement and memory arrays and
+    rebuilds the CSR matrix, at a cost of O(MN&nbsp;+&nbsp;E), so at 10.5 million nodes every event copies the 3.0&nbsp;GB
+    array that records each node's last M draws. Direct injection adds r red balls to k rows of U, which costs O(k) and leaves the graph unchanged.
+    Target rankings are computed once. Degree centrality counts each node's occurrences in the edge list, O(E), and sorts
+    the counts, O(N&nbsp;log&nbsp;N). Eigenvector centrality uses power iteration,
+    x&nbsp;&larr;&nbsp;Ax&nbsp;/&nbsp;&#8214;Ax&#8214;, stopped when x changes by less than 10<sup>&minus;6</sup> or after
+    100 iterations, so it requires at most 100 sparse matrix-vector products of O(N&nbsp;+&nbsp;E) each.
+  </p>
+
+  <h2>Performance</h2>
+  <p>
+    Below are three rows from the simulation benchmark, timing the task of growing an m&nbsp;=&nbsp;3 Barab&aacute;si&ndash;Albert network, building the CSR
+    matrix, and running 100 P&oacute;lya steps. Benchmarks were run on available consumer hardware and modern data center chips.
+  </p>
+  <div style="overflow-x: auto">
   <table>
     <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti</th><th>A100</th></tr>
-    <tr><td>2.2 M</td><td>13.4 M</td><td>38.2 s</td><td>3.7 s</td><td>1.7 s</td></tr>
-    <tr><td>17.9 M</td><td>107 M</td><td>348 s</td><td>25.3 s</td><td>9.3 s</td></tr>
-    <tr><td>71.6 M</td><td>430 M</td><td>1,565 s</td><td>1,557 s</td><td>37.9 s</td></tr>
+    <tr><td>2.2 M</td><td>6.7 M</td><td>38.2 s</td><td>3.7 s</td><td>1.7 s</td></tr>
+    <tr><td>17.9 M</td><td>53.7 M</td><td>348 s</td><td>25.3 s</td><td>9.3 s</td></tr>
+    <tr><td>71.6 M</td><td>215 M</td><td>1,565 s</td><td>1,557 s</td><td>37.9 s</td></tr>
   </table>
+  </div>
   <p>
-    The 1660 Ti is about 14&times; faster than the CPU until the graph no longer fits in its 6 GB of VRAM.
-    Past that point the GPU spends its time paging through unified memory in system RAM and drops back to
-    CPU speed. The A100 keeps scaling and finishes the largest run about 41&times; faster than the CPU.
+    Note that the 1660 Ti is about 14&times; faster than the CPU until the graph no longer fits in its 6 GB of VRAM. At 71.6 million
+    nodes the simulation needs about 9.6 GB of GPU memory, so the matrices are forced into unified memory. As a result the GPU spends
+    its time paging data across PCIe, and it falls back to CPU speed. The A100 keeps everything in its own memory and
+    finishes the largest run about 41&times; faster than the CPU.
   </p>
   <figure>
-    <img src="../images/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100">
-    <figcaption>Total compute time against network size (both axes log scale).</figcaption>
+    <img src="../images/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
+    <figcaption>
+      Total time to grow a network, build its CSR matrix and run 100 P&oacute;lya steps, against network size (both axes
+      log scale). The 1660 Ti's curve jumps once the graph outgrows its 6 GB of VRAM.
+    </figcaption>
   </figure>
 
-  <h2>What's next</h2>
+  <h2>Analysis</h2>
+  <p>
+    With the simulator in place, we swept intervention strength, number of targets, timing, targeting rule and network
+    density. Rather than walk through every run, this section describes the patterns that held across them, the
+    mathematics behind each, and one representative comparison.
+  </p>
+  <figure>
+    <img src="../images/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps, with most nodes moving to over 90% red by about step 400">
+    <figcaption>
+      The distribution of per-node red fractions at each step in one run on a 65,600-node network, with red balls
+      injected at step 144. Before step 72 the urns are still growing, so the fractions they can take shift every step,
+      producing the stripes. The thin line at 0.5 is a binning artifact, which arises because after warm-up the fractions
+      sit on the grid k/74 and the bin starting at 0.5 is the only one of the 72 that holds two grid values. After the injection, most nodes pass 90% red by
+      around step 400.
+    </figcaption>
+  </figure>
+  <h3>Density cuts both ways</h3>
+  <p>
+    With switch-network interventions, the m = 3 and m = 5 networks reached full consensus and the m = 1 network about
+    90%, while direct injection barely moved the m = 1 network at all. After warm-up, a node with d neighbours draws from
+    a super urn of 74(d&nbsp;+&nbsp;1) balls. In a sparse network super urns are small, so a few injected red balls
+    dominate a target's neighbourhood, but paths between nodes are long and few, so that local bias spreads slowly. In a
+    dense network the paths are short, but the super urns are large. The smallest hold 148 balls at m = 1 and 444 at
+    m = 5, and those of hubs run to tens of thousands, so the same 296 red balls that dominate a sparse neighbourhood barely
+    register at a hub. Denser networks spread infection faster but need larger interventions to start it.
+  </p>
+
+  <h3>Timing and diminishing returns</h3>
+  <p>
+    Every parameter showed diminishing returns, with switch-network gains flattening past about 1,250 red balls per node,
+    seven nodes per intervention or a 10% intervention probability, and injection gains flattening past about 300 red
+    balls per target.
+    Timing mattered more than volume. With a constant intervention probability, interventions kept arriving after
+    infection had already taken off, so we switched to a decaying probability p(t)&nbsp;=&nbsp;e<sup>&minus;t/&tau;</sup>,
+    which concentrated interventions at the start and made them more cost-efficient.
+  </p>
+  <p>
+    Memory explains both effects. A steady-state urn is a moving average of its last 72 draws, so a node stays infected
+    only while its neighbourhood keeps drawing red, and past reinforcement cannot be banked. Within that window the urn's
+    sensitivity to early draws still applies, so infection that spreads early becomes self-sustaining and resources spent
+    after that point buy little.
+  </p>
+
+  <h3>Degree versus eigenvector centrality</h3>
+  <p>
+    Targeting by degree beat targeting by eigenvector centrality at every density. With 74 red balls per target on the
+    m = 3 network, eigenvector targeting left about five times as many nodes near an even split (510,784, against 101,312
+    for degree). A high-degree node's urn appears in the most super urns, many of them belonging to other hubs, since the
+    hubs of a Barab&aacute;si&ndash;Albert graph form a densely connected core. Eigenvector centrality rewards connections
+    to important nodes rather than many connections, so its targets reach fewer super urns directly and their influence has
+    to pass through intermediate hubs first.
+  </p>
+
+  <h3>Switch-network nodes versus injection</h3>
+  <p>
+    The two strategies touch different super urns. Injecting into node j raises R<sub>j</sub>, which sits in the super
+    urns of j and its neighbours, but changes no neighbourhood. An intervention node adds a term to the super urn of every
+    target, so one node wired to a thousand hubs biases all of them at once, and the bias spreads through the hub core and
+    outward. With an unlimited budget, injection is faster, because it biases its targets and their neighbours
+    immediately. Under a fixed budget the outcome depends on the cost model, because injection is charged for every
+    target while an intervention node costs the same whether it connects to ten nodes or a thousand.
+  </p>
+  <p>
+    One of the fixed-budget comparisons we ran shows the difference. On a 10.5-million-node network, with the
+    switch-network intervention given a budget 25% smaller than direct injection, the nodes were distributed by red
+    fraction at step 862 as follows:
+  </p>
+  <table>
+    <tr><th>Red fraction</th><th>Switch network</th><th>Direct injection</th></tr>
+    <tr><td>0.5&ndash;0.6</td><td>0</td><td>914</td></tr>
+    <tr><td>0.6&ndash;0.7</td><td>600</td><td>59,885</td></tr>
+    <tr><td>0.7&ndash;0.8</td><td>79,961</td><td>1,257,616</td></tr>
+    <tr><td>0.8&ndash;0.9</td><td>2,603,529</td><td>5,357,550</td></tr>
+    <tr><td>0.9&ndash;1.0</td><td>7,869,319</td><td>3,877,443</td></tr>
+    <tr><th>Infected (&ge; 0.8)</th><th>99.2%</th><th>87.5%</th></tr>
+  </table>
+  <p>
+    The switch-network run infected 99.2% of nodes, with three quarters above 90% red. The injection run passed the 80%
+    consensus threshold at 87.5%, but left more than 1.3 million nodes below the infection threshold.
+  </p>
+
+  <h2>What I'd do next</h2>
   <ul>
-    <li>Splitting work between CPU and GPU, so graphs larger than VRAM stay in system RAM and are streamed to the GPU in blocks.</li>
-    <li>Storing edges as bits instead of 32-bit integers to cut graph memory further.</li>
-    <li>Growth rules beyond Bernoulli trials.</li>
+    <li>Split work between the CPU and GPU, keeping graphs larger than VRAM in system RAM and streaming blocks of the
+      sparse matrix to the GPU, instead of allowing naive paging through unified memory.</li>
+    <li>Cut graph memory further. Every value stored in the CSR matrix is 1, so its 32-bit value array could be booleans or
+      dropped entirely, roughly halving the matrix.</li>
+    <li>Let the network keep growing during the simulation, with growth rules beyond Bernoulli trials.</li>
+    <li>Explore adding more colours to the process, and different intervention strategies.</li>
   </ul>
 
   <h2>Tools</h2>
-  <p>Python, NumPy, SciPy (sparse matrices), CuPy and CUDA, Google Colab, Gephi.</p>
+  <p>Python, NumPy, SciPy (sparse matrices), CuPy and CUDA, Google Colab, Matplotlib, Gephi.</p>
 
   <hr>
-  <p class="small"><a href="../index.html"> <- Back to home</a></p>
+  <p class="small"><a href="../index.html">&lt;- Back to home</a></p>
 
 </body>
 </html>

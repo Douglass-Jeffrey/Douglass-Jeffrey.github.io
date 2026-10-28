@@ -258,16 +258,115 @@
   </table>
   </div>
   <p>
-    Note that the 1660 Ti is about 14&times; faster than the CPU until the graph no longer fits in its 6 GB of VRAM. At 71.6 million
-    nodes the simulation needs about 9.6 GB of GPU memory, so the matrices are forced into unified memory. As a result the GPU spends
-    its time paging data across PCIe, and it falls back to CPU speed. The A100 keeps everything in its own memory and
-    finishes the largest run about 41&times; faster than the CPU.
+    Note that the 1660 Ti is about 14&times; faster than the CPU until the simulation no longer fits in its 6&nbsp;GB of
+    VRAM, after which it falls back to CPU speed. The A100 keeps everything in its own memory and finishes the largest
+    run about 41&times; faster than the CPU.
   </p>
   <figure>
     <img src="../images/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
     <figcaption>
       Total time to grow a network, build its CSR matrix and run 100 P&oacute;lya steps, against network size (both axes
-      log scale). The 1660 Ti's curve jumps once the graph outgrows its 6 GB of VRAM.
+      log scale). The 1660 Ti's curve jumps once the simulation outgrows its 6&nbsp;GB of VRAM.
+    </figcaption>
+  </figure>
+
+  <h3>Profiling the 1660 Ti</h3>
+  <p>
+    To find out why, the benchmark was traced with NVIDIA Nsight Systems (CUDA, cuSPARSE and NVTX ranges, and CUDA memory
+    usage) at 17.9, 35.8 and 71.6 million nodes. The first finding is that unified memory is not involved. No allocation in
+    any trace is managed memory, and on Windows the 1660 Ti cannot migrate pages on demand. Instead, when an ordinary
+    <code>cudaMalloc</code> exceeds free VRAM, the Windows display driver (WDDM) backs the allocation with system RAM,
+    which Task Manager reports as shared GPU memory. On this machine that adds 16.0&nbsp;GB to the card's 5.8&nbsp;GB. The
+    driver can move a whole allocation between the two, but it never fetches pages as a kernel touches them, so a kernel
+    that uses an allocation left in system RAM reads it across PCIe&nbsp;3.0 at 13&nbsp;GB/s instead of from GDDR6 at about
+    260&nbsp;GB/s.
+  </p>
+  <p>
+    The second finding is that the simulation needs far more GPU memory than the graph. The CSR matrix stores its values
+    as float32 and the urns are int32, so CuPy promotes the product AU to float64. Every step it therefore rebuilds the
+    matrix in float64, copying the column indices and row pointers along with it, and copies U and the result into
+    float64 as well. At 71.6 million nodes that is 7.7&nbsp;GB of temporaries per step, more than twice the matrix itself.
+    The edge list and stub list left over from growth, a further 5.5&nbsp;GB, also stay allocated although nothing reads
+    them after the CSR build. Allocations peak at 5.6&nbsp;GB at 17.9 million nodes, 11.5&nbsp;GB at 35.8 million and
+    19.4&nbsp;GB at 71.6 million, against 5.0&nbsp;GB of VRAM free to CUDA. The largest run comes close to the 21.8&nbsp;GB the
+    driver allows in total, and CuPy's allocator had to empty its cache to get through the first step.
+  </p>
+  <figure>
+    <img src="../images/capstone-gpu-footprint.png" width="1625" height="624" alt="Three panels of CUDA memory allocated over time for 17.9, 35.8 and 71.6 million nodes, rising in steps during growth and again at the first P&oacute;lya step, to peaks of 5.6, 11.5 and 19.4 GB against a free-VRAM line at 5.0 GB and a driver limit at 21.8 GB">
+    <figcaption>
+      CUDA memory allocated during growth, the CSR build and the P&oacute;lya steps, from the Nsight Systems memory trace.
+      Everything above the orange line lives in system RAM. The dip at the first step of the 71.6 million node run is
+      CuPy releasing its cached blocks after an allocation failed at the driver limit.
+    </figcaption>
+  </figure>
+  <p>
+    Run as administrator, Nsight also records the driver's own accounting (its WDDM trace) and samples PCIe traffic (GPU
+    Metrics). At 71.6 million nodes the driver keeps 5.4&nbsp;GB of the simulation in VRAM and has demoted 13.8&nbsp;GB to
+    system RAM. During the steps it moves almost nothing between the two, 0.1&nbsp;GB in the first step and none after, so
+    the data is not paged back and forth. Kernels read it where it lies.
+  </p>
+  <figure>
+    <img src="../images/capstone-wddm.png" width="1625" height="832" alt="Two panels for 71.6 million nodes, current code and both fixes. Top: GPU memory split into VRAM, flat at about 5.5 GB, and memory demoted to system RAM, 13.8 GB with the current code and 3.3 GB with the fixes. Bottom: PCIe read traffic, a plateau near 25 percent of the link during each step of the current code and short bursts with the fixes">
+    <figcaption>
+      Top: the simulation's GPU memory as the Windows driver reports it, split into what is resident in VRAM and what it
+      has demoted to system RAM. Bottom: PCIe read traffic sampled by GPU Metrics. With the current code each step sits
+      on a plateau near 25% of the link, the random reads of the sparse product, broken by bursts near the peak where the
+      float64 copies stream through. With both fixes the driver moves 3.3&nbsp;GB into VRAM during the first step. The
+      shaded band is the read probes described below.
+    </figcaption>
+  </figure>
+  <p>
+    To see which buffers were demoted, each was timed with a full read on the GPU. About 250 to 270&nbsp;GB/s means the
+    buffer is in VRAM, and 13&nbsp;GB/s means it is in system RAM. At 35.8 million nodes the matrix and the urns are in
+    VRAM, while the dead growth buffers and two of the per-step copies are not. At 71.6 million nodes the matrix values
+    and indices are themselves in system RAM, as is the float64 copy of U that the product reads from.
+  </p>
+  <figure>
+    <img src="../images/capstone-residency.png" width="1625" height="780" alt="Two bar charts of measured read bandwidth per GPU buffer at 35.8 and 71.6 million nodes; buffers in VRAM read at about 255 GB/s and buffers in system RAM at about 13 GB/s, with the CSR values and indices in system RAM at 71.6 million nodes">
+    <figcaption>
+      Read bandwidth of each buffer after the P&oacute;lya steps. Blue bars are in VRAM and orange bars in system RAM,
+      reached over PCIe. The last three rows are the copies made for the product AU.
+    </figcaption>
+  </figure>
+  <p>
+    The product is the expensive part because its reads of U are random. For each stored entry (i,&nbsp;j) it reads row j
+    of U, and a microbenchmark shows that a random 8-byte read from system RAM is 8 to 28 times slower than one from VRAM,
+    getting worse as the buffer grows.
+  </p>
+  <div style="overflow-x: auto">
+  <table>
+    <tr><th>Random 8-byte read from a buffer of</th><th>256 MB</th><th>512 MB</th><th>1 GB</th><th>2 GB</th></tr>
+    <tr><td>VRAM</td><td>0.68 ns</td><td>0.69 ns</td><td>0.68 ns</td><td>0.68 ns</td></tr>
+    <tr><td>System RAM, over PCIe</td><td>5.3 ns</td><td>6.7 ns</td><td>13.6 ns</td><td>18.8 ns</td></tr>
+  </table>
+  </div>
+  <p>
+    At 71.6 million nodes each of the 215 million edges is stored twice, and the product reads both columns of U for each
+    of the 429.5 million entries, 859 million random reads from a 1.1&nbsp;GB buffer in system RAM. At 13.6&nbsp;ns each that
+    is 11.7&nbsp;s, and the cuSPARSE kernel took 10.8&nbsp;s of the 12.8&nbsp;s step. Nsight Compute shows that the bus is not
+    full. Each 8-byte read pulls about 43&nbsp;bytes across PCIe, and one product moves 44.7&nbsp;GB in all, but at only
+    3.9&nbsp;GB/s, less than a third of what the link reaches in a sequential read. The reads wait on round trips across
+    the bus, not on its width. The Ryzen runs SciPy's single-threaded sparse product at 15.0&nbsp;s per step. Both
+    processors are then making random reads from the same system RAM, the GPU across PCIe, which is why the 1660 Ti ends
+    up at CPU speed.
+  </p>
+  <p>
+    Two changes test this explanation. The first casts U to float32 before the product, so cuSPARSE uses the stored
+    float32 matrix and makes no per-step copy. This is exact while super-urn counts stay below 2<sup>24</sup>, about
+    16.8 million, and beyond that rounds the drawing probabilities by less than one part in 10<sup>7</sup>. The second
+    frees the edge and stub lists after the CSR build. With both, a step at 35.8 million nodes needs 4.3&nbsp;GB,
+    everything stays in VRAM, and the step takes 0.35&nbsp;s instead of 1.5&nbsp;s (3.7&nbsp;s in the benchmark), 20&times;
+    faster than the CPU. At 71.6 million nodes the graph alone outgrows free VRAM, but the operands of the product,
+    about 4.5&nbsp;GB, now nearly fit, and the driver moves 3.3&nbsp;GB into VRAM during the first step. The product's PCIe
+    traffic then falls from 44.7&nbsp;GB to 1.6&nbsp;GB and its time from 11.6&nbsp;s to 0.53&nbsp;s. Later steps take 1.7 to
+    2.3&nbsp;s across runs, 6.5 to 8.8&times; faster than the CPU.
+  </p>
+  <figure>
+    <img src="../images/capstone-step-time.png" width="1430" height="728" alt="Log-log plot of seconds per P&oacute;lya step against nodes; the CPU rises linearly to 15 s, the benchmarked 1660 Ti rises linearly to 0.19 s at 17.9 million nodes then jumps to meet the CPU, and the fixed 1660 Ti stays low to 0.35 s at 35.8 million and 2.3 s at 71.6 million">
+    <figcaption>
+      Time per P&oacute;lya step. Below 17.9 million nodes the two changes make little difference. Near the spill point the
+      unmodified code is erratic: at 17.9 million nodes the benchmark measured 0.19&nbsp;s and 0.76&nbsp;s per step in two
+      runs and a re-run 1.19&nbsp;s, depending on which copies the driver left in system RAM.
     </figcaption>
   </figure>
 
@@ -355,7 +454,7 @@
   <h2>What I'd do next</h2>
   <ul>
     <li>Split work between the CPU and GPU, keeping graphs larger than VRAM in system RAM and streaming blocks of the
-      sparse matrix to the GPU, instead of allowing naive paging through unified memory.</li>
+      sparse matrix to the GPU, instead of leaving the Windows driver to spill allocations into shared memory.</li>
     <li>Cut graph memory further. Every value stored in the CSR matrix is 1, so its 32-bit value array could be booleans or
       dropped entirely, roughly halving the matrix.</li>
     <li>Let the network keep growing during the simulation, with growth rules beyond Bernoulli trials.</li>

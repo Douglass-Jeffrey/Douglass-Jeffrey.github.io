@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>P&oacute;lya Contagion on Large Networks - Douglass Jeffrey</title>
   <link rel="stylesheet" href="../style.css">
 </head>
@@ -18,8 +17,8 @@
   </p>
 
   <figure>
-    <video controls muted loop playsinline preload="none" width="1280" height="914" poster="../images/capstone-animation-poster.jpg">
-      <source src="../images/capstone-animation.mp4" type="video/mp4">
+    <video controls muted loop playsinline preload="none" width="1280" height="914" poster="../images/polya-capstone/capstone-animation-poster.jpg">
+      <source src="../images/polya-capstone/capstone-animation.mp4" type="video/mp4">
     </video>
     <figcaption>
       A networked P&oacute;lya process on a grown degree-1 Barab&aacute;si&ndash;Albert network with direct-injection
@@ -100,22 +99,22 @@
   <p>
     Many real networks are scale-free, meaning most nodes have few connections while a
     small number are hubs with many connections. The Barab&aacute;si&ndash;Albert model
-    (<a href="https://doi.org/10.1126/science.286.5439.509">Barab&aacute;si &amp; Albert, 1999</a>) produces this by
-    preferential attachment. Starting from a fully connected core of m<sub>0</sub> nodes, each new node makes m
+    (<a href="https://doi.org/10.1126/science.286.5439.509">Barab&aacute;si &amp; Albert, 1999</a>) produces this behaviour
+    through a preferential attachment mechanism. Starting from a fully connected core of m<sub>0</sub> nodes, each new node makes m
     connections, attaching to an existing node i with probability
   </p>
   <p class="eq">
     &Pi;<sub>i</sub> = <span class="frac"><span>k<sub>i</sub></span><span>&Sigma;<sub>j</sub> k<sub>j</sub></span></span>
   </p>
   <p>
-    where k<sub>i</sub> is node i's degree. The well connected become better connected, which gives a power-law degree
-    distribution, P(k)&nbsp;&prop;&nbsp;k<sup>&minus;3</sup>. Larger m means a denser graph with shorter paths between
-    nodes.
+    where k<sub>i</sub> is node i's degree. As a result highly connected nodes are likely to gain additional connections,
+    which gives a power-law degree distribution, P(k)&nbsp;&prop;&nbsp;k<sup>&minus;3</sup>. Larger m means a denser graph
+    with shorter average paths between nodes.
   </p>
 
   <h3>Switch networks</h3>
   <p>
-    A switch, or threshold, graph is built by adding nodes that are either dominating (connected to every node already
+    A switch network (also called threshold graph) is built by adding nodes that are either dominating (connected to every node already
     present) or isolated (connected to none), chosen by a coin flip or by a draw from a separate P&oacute;lya urn. A
     dominating node enters the super urn of every node it attaches to, which is the basis of the first intervention
     strategy below. Switch networks are extremely dense, since a dominating node at position n brings n edges, yet they can
@@ -144,107 +143,95 @@
     </li>
   </ul>
 
-  <h2>Network design and computational optimization</h2>
+  <h2>Simulation Process</h2>
   <p>
-    The initial implementation represented each node and each urn as a Python object, and it is the baseline against
-    which the optimizations below are measured. Each is given with its effect on running time and memory, either measured
-    in the benchmarks or calculated directly, for a network of N nodes and E undirected edges.
+    Simulating the networked P&oacute;lya process can be expressed as the following 4 step pipeline.
   </p>
-  <figure>
-    <img src="../images/capstone-small-benchmark.png" width="1000" height="600" alt="Log-scale plot of total time against number of nodes from 128 to 32,768, in which the original implementation climbs to about 500 seconds, the vectorized GPU version to about 6 seconds and the vectorized CPU version to under a second">
-    <figcaption>
-      Time to grow a Barab&aacute;si&ndash;Albert graph and run 100 P&oacute;lya steps (log&ndash;log). Green: the initial
-      implementation. Blue and orange: the final implementation on the CPU (about 740&times; faster at 32,768 nodes) and
-      GPU. The GPU trails here only because this benchmark grows the graph 8 nodes at a time.
-    </figcaption>
-  </figure>
-
-  <h3>Array state and sparse super urns</h3>
+  <ol>
+    <li><b>Network Generation Step.</b> Grow a scale-free network to N nodes, generating a starting urn for each node,
+      usually 1 ball of each colour.</li>
+    <li><b>t<sub>0</sub> Polya Steps.</b> Run t<sub>0</sub> steps of the finite-memory networked P&oacute;lya process. Most runs
+      used t<sub>0</sub>&nbsp;=&nbsp;144, so that the urns pass through two full memory windows before the intervention step.</li>
+    <li><b>Intervention Steps.</b> Rank the nodes by degree or eigenvector centrality and apply the intervention methods
+      discussed above, modifying the network in some way.</li>
+    <li><b>T-t<sub>0</sub> Polya Steps.</b> Run the remaining steps, 720 in most runs, on the modified network.</li>
+  </ol>
+  <h2>Simulation Design and Optimization</h2>
   <p>
-    The initial implementation assembled each super urn through Python calls to the node's neighbours. This is
-    O(N&nbsp;+&nbsp;E) work per step, but each unit is an interpreted function call, and every step allocates N
-    temporary super-urn objects. The optimized implementation stores the urns as an N&times;2 integer matrix U and the network
-    as a compressed sparse row (CSR) adjacency matrix A, so that all super urns are given by one matrix product,
+    The simulator's design was an iterative process that changed drastically as the scope of the thesis became clear.
+    Exploiting the data parallelism offered by GPUs was key in scaling the simulation up to tens of millions of nodes.
+    Each step of the pipeline was written as a sequence of array and matrix operations covering the whole network,
+    which are ran on the GPU as CUDA kernels to process as many nodes as possible node in parallel. The following
+    sections describe how each step was implemented, and lay out its cost in time and memory for a network of N nodes
+    and E edges.
+  </p>
+
+  <h3>Network Generation Step</h3>
+  <p>
+    Sampling from the attachment probabilities &Pi;<sub>i</sub> was implemented with an edge list, a dynamic
+    2E&times;1 array to which both endpoints of every new connection are appended. Node j appears in the list once for
+    each of its connections, so sampling randomly and uniformly from it selects nodes according to preferential attachment
+    in O(1) time.
+  </p>
+  <p>
+    The network generation step was further optimized for time by batching the growth steps. Each batch of new nodes is
+    added concurrently, with all connections chosen randomly from the same snapshot of the graph. The total work stays
+    O(mN), but the number of sequential steps drops from N to the number of batches.
+  </p>
+  <p>
+    Once growth is finished, the edge list is converted into a compressed sparse row (CSR) adjacency matrix A, which
+    stores only the edges that exist rather than an N&times;N grid of zeros and ones. The conversion takes
+    O(N&nbsp;+&nbsp;E) time, and the matrix takes O(N&nbsp;+&nbsp;E) memory instead of O(N<sup>2</sup>).
+  </p>
+
+  <h3>P&oacute;lya Step</h3>
+  <p>
+    Computing the super urns was implemented by storing every urn in an N&times;2 integer matrix U, with one row of red
+    and black counts per node, so that all N super urns come from a single sparse matrix product,
   </p>
   <p class="eq">S = (A + I)U,</p>
   <p>
-    followed by O(N) element-wise operations for the draws and the urn update. All nodes draw from the state at the start
-    of the step, so the N draws are independent given U, and each operation runs as a data-parallel CUDA kernel over
-    every node. At 32,768 nodes a step fell from 416&nbsp;ms to 3.5&nbsp;ms on the CPU, a 119x speedup. At 8.9 million
-    nodes the GTX 1660 Ti completes a step in 0.09&nbsp;s, against 1.6&nbsp;s on the CPU, an 18x speedup.
+    since row i of AU sums the urns of node i's neighbours and adding U includes node i's own. Each node then draws by
+    comparing one uniform random number with the red fraction of its row of S, and &Delta; balls are added to the drawn
+    column of U. The product takes O(N&nbsp;+&nbsp;E) time and the draws take O(N).
   </p>
   <p>
-    The object representation used about 1&nbsp;KB per node at an average degree of six. CSR stores 8 bytes per edge entry
-    (a 32-bit column index and a 32-bit value, with each undirected edge stored in both directions) and a 4-byte row
-    pointer per node, which is O(N&nbsp;+&nbsp;E) rather than the O(N<sup>2</sup>) of a dense adjacency matrix. At 71.6
-    million nodes the CSR matrix occupies 3.7&nbsp;GB, where a dense matrix would need 640&nbsp;TB even at one bit per
-    entry, and the whole simulation uses 9.6&nbsp;GB, about 135 bytes per node. At 1&nbsp;KB per node, the object
-    representation would have needed about 75&nbsp;GB.
+    On the GPU, the sparse product is computed by cuSPARSE and the random numbers are generated by cuRAND. Because the
+    nodes draw concurrently from the same state and each writes only to its own row of U, every operation runs as a
+    parallel CUDA kernel with no synchronization between threads. The costs above are for a sequential implementation,
+    which processes one node at a time. On a GPU with P cores the same work is shared among the cores, so a step ideally
+    takes O((N&nbsp;+&nbsp;E)/P) time, with P&nbsp;=&nbsp;1,536 on the GTX 1660 Ti.
+  </p>
+  <p>
+    Finite memory was implemented with an M&times;N ring buffer holding each node's last M draws. At step n, row
+    n&nbsp;mod&nbsp;M holds the draws from step n&nbsp;&minus;&nbsp;M, which are subtracted from the urns before the row
+    is overwritten with the current draws. This takes O(N) time per step regardless of M, and O(MN) memory.
   </p>
 
-  <h3>Switch networks without stored edges</h3>
+  <h3>Intervention Step</h3>
   <p>
-    A dominating node at position j is connected to all j earlier nodes, so a switch network in which each node is
-    dominating with probability p has about pN<sup>2</sup>/2 edges. At N&nbsp;=&nbsp;10<sup>9</sup> and
-    p&nbsp;=&nbsp;0.01 this is 5&times;10<sup>15</sup> edges, or 80&nbsp;PB in CSR. The network is, however, determined entirely
-    by one boolean per node, where s<sub>j</sub>&nbsp;=&nbsp;1 if node j is dominating, because nodes i&nbsp;&lt;&nbsp;j are
-    adjacent exactly when s<sub>j</sub>&nbsp;=&nbsp;1. Node i's super urn is therefore its own urn, the urns of all later dominating
-    nodes, and, if i is itself dominating, the urns of all earlier nodes:
-  </p>
-  <p class="eq">
-    S<sub>i</sub> = U<sub>i</sub> + &Sigma;<sub>j&gt;i</sub> s<sub>j</sub>U<sub>j</sub> + s<sub>i</sub> &Sigma;<sub>j&lt;i</sub> U<sub>j</sub>
+    The centrality rankings were computed only once, before the first intervention. Degree centrality is found by
+    counting each node's appearances in the edge list and sorting the counts, which takes
+    O(E&nbsp;+&nbsp;N&nbsp;log&nbsp;N) time. Eigenvector centrality is found by power iteration, repeating
+    x&nbsp;&larr;&nbsp;Ax&nbsp;/&nbsp;&#8214;Ax&#8214; for at most 100 iterations, each of which is an
+    O(N&nbsp;+&nbsp;E) sparse matrix-vector product.
   </p>
   <p>
-    Both sums are prefix sums over the urn matrix. Storage falls from O(pN<sup>2</sup>) to O(N), 1&nbsp;GB of flags at
-    10<sup>9</sup> nodes, and the work per step falls by a factor of pN/2&nbsp;=&nbsp;5&times;10<sup>6</sup>. With
-    32&nbsp;GB of RAM, a one-billion-node switch network ran on a desktop CPU at about 200 seconds per step.
-  </p>
-
-  <h3>Barab&aacute;si&ndash;Albert growth</h3>
-  <p>
-    The initial implementation computed attachment probabilities over all n existing nodes for each new node, a total of
-    &Sigma;<sub>n&lt;N</sub>&nbsp;n&nbsp;&asymp;&nbsp;N<sup>2</sup>/2 operations. Growth was therefore O(N<sup>2</sup>),
-    which took 434 seconds at 32,768 nodes. Two changes reduce the cost to O(mN), which is linear in the number of edges.
-  </p>
-  <p>
-    The first is a stub list, an array of edge endpoints in which node i appears k<sub>i</sub> times. A uniformly random
-    entry is node i with probability k<sub>i</sub>&nbsp;/&nbsp;&Sigma;<sub>j</sub>&nbsp;k<sub>j</sub>, which is exactly the
-    attachment rule, so each of a new node's m targets is drawn in O(1) time without recomputing any probabilities. The
-    second is batching, in which a batch of new nodes samples all of its targets at once from the same snapshot of the
-    graph and any node that draws a target twice resamples. This reduces the number of sequential iterations from N to the number of
-    batches. The 10,553,408-node network used in the analysis section of the thesis was grown in 896 batches,
-  </p>
-  <p class="eq">64 + 256&times;8 + 256&times;256 + 256&times;8,192 + 128&times;65,536 = 10,553,408,</p>
-  <p>
-    about 11,800 nodes per batch on average. At 17.9 million nodes the batched sampling takes
-    4.9&nbsp;s on the CPU, 1.5&nbsp;s on the GTX 1660 Ti (3.2x) and 0.6&nbsp;s on an A100 (7.7x). On the GPUs the build
-    time is then dominated by conversion of the edge list to CSR, which the simulator performs on the host above
-    10<sup>6</sup> edges to stay within the 1660 Ti's 6&nbsp;GB of VRAM. At 71.6 million nodes, for example, the A100
-    samples the graph in 1.5&nbsp;s and spends a further 27.8&nbsp;s on the conversion.
-  </p>
-  <!--
-  <h3>Finite memory</h3>
-  <p>
-    Removing each ball M steps after it was added requires the colours of every node's last M draws, MN bits in total.
-    The simulator keeps them in an M&times;N ring buffer. At step n, row n&nbsp;mod&nbsp;M holds the draws from step
-    n&nbsp;&minus;&nbsp;M, which are subtracted from the urns before the row is overwritten with the current draws. Removal
-    is therefore a single O(N) operation per step, independent of M, and needs no per-ball timestamps. Stored as 32-bit
-    integers, the buffer occupies 4MN bytes, or 3.0&nbsp;GB at 10.5 million nodes with M&nbsp;=&nbsp;72. Since each entry
-    is a single bit, packing would reduce it 32-fold, to 95&nbsp;MB.
-  </p>
-  -->
-  <h3>Interventions</h3>
-  <p>
-    An intervention node changes the graph. Each intervention event extends the urn, reinforcement and memory arrays and
-    rebuilds the CSR matrix, at a cost of O(MN&nbsp;+&nbsp;E), so at 10.5 million nodes every event copies the 3.0&nbsp;GB
-    array that records each node's last M draws. Direct injection adds r red balls to k rows of U, which costs O(k) and leaves the graph unchanged.
-    Target rankings are computed once. Degree centrality counts each node's occurrences in the edge list, O(E), and sorts
-    the counts, O(N&nbsp;log&nbsp;N). Eigenvector centrality uses power iteration,
-    x&nbsp;&larr;&nbsp;Ax&nbsp;/&nbsp;&#8214;Ax&#8214;, stopped when x changes by less than 10<sup>&minus;6</sup> or after
-    100 iterations, so it requires at most 100 sparse matrix-vector products of O(N&nbsp;+&nbsp;E) each.
+    Since the switch-network intervention adds nodes to the network, each event copies the urn, reinforcement and memory
+    arrays into larger ones, appends the new edges to the edge list and rebuilds the CSR matrix, which takes
+    O(MN&nbsp;+&nbsp;E) time. Direct injection leaves the network unchanged and only adds red balls to k rows of U, so it
+    takes O(k) time.
   </p>
 
   <h2>Performance</h2>
+  <figure>
+    <img src="../images/polya-capstone/capstone-small-benchmark.png" width="1000" height="600" alt="Log-scale plot of total time against number of nodes from 128 to 32,768, in which the original implementation climbs to about 500 seconds, the vectorized GPU version to about 6 seconds and the vectorized CPU version to under a second">
+    <figcaption>
+      Time to grow a Barab&aacute;si&ndash;Albert graph and run 100 P&oacute;lya steps (log-log). Green is the initial
+      implementation. Blue and orange are the final implementation on the CPU (about 740&times; faster at 32,768 nodes) and
+      GPU respectively. The GPU trails here due to the small batch sizes used in the benchmark.
+    </figcaption>
+  </figure>
   <p>
     Below are three rows from the simulation benchmark, timing the task of growing an m&nbsp;=&nbsp;3 Barab&aacute;si&ndash;Albert network, building the CSR
     matrix, and running 100 P&oacute;lya steps. Benchmarks were run on available consumer hardware and modern data center chips.
@@ -258,12 +245,11 @@
   </table>
   </div>
   <p>
-    Note that the 1660 Ti is about 14&times; faster than the CPU until the simulation no longer fits in its 6&nbsp;GB of
-    VRAM, after which it falls back to CPU speed. The A100 keeps everything in its own memory and finishes the largest
-    run about 41&times; faster than the CPU.
+    Note that the 1660 Ti is about 14&times; faster than the CPU until performance decays around 3&times;10<sup>7</sup> nodes.
+    The A100 finishes the largest run about 41&times; faster than the CPU.
   </p>
   <figure>
-    <img src="../images/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
+    <img src="../images/polya-capstone/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
     <figcaption>
       Total time to grow a network, build its CSR matrix and run 100 P&oacute;lya steps, against network size (both axes
       log scale). The 1660 Ti's curve jumps once the simulation outgrows its 6&nbsp;GB of VRAM.
@@ -272,47 +258,77 @@
 
   <h3>Profiling the 1660 Ti</h3>
   <p>
-    To find out why, the benchmark was traced with NVIDIA Nsight Systems (CUDA, cuSPARSE and NVTX ranges, and CUDA memory
-    usage) at 17.9, 35.8 and 71.6 million nodes. The first finding is that unified memory is not involved. No allocation in
-    any trace is managed memory, and on Windows the 1660 Ti cannot migrate pages on demand. Instead, when an ordinary
-    <code>cudaMalloc</code> exceeds free VRAM, the Windows display driver (WDDM) backs the allocation with system RAM,
-    which Task Manager reports as shared GPU memory. On this machine that adds 16.0&nbsp;GB to the card's 5.8&nbsp;GB. The
-    driver can move a whole allocation between the two, but it never fetches pages as a kernel touches them, so a kernel
-    that uses an allocation left in system RAM reads it across PCIe&nbsp;3.0 at 13&nbsp;GB/s instead of from GDDR6 at about
-    260&nbsp;GB/s.
+    Why does the 1660 Ti fall to CPU speed at around 3&times;10<sup>7</sup> nodes? Up to 17.9 million nodes it finishes
+    the benchmark about 14&times; faster than the Ryzen, yet at 71.6 million nodes the two are within 1% of each other.
+    To find out, the benchmark was traced with NVIDIA Nsight Systems, which puts every kernel, memory allocation and
+    NVTX range on one timeline, samples DRAM and PCIe traffic through its GPU Metrics, and can log the Windows display
+    driver's memory accounting. The kernel that dominates each step was then measured on its own with Nsight Compute.
+    The traces cover 8.9 million nodes, where the whole simulation fits in the 6&nbsp;GB of VRAM, and 35.8 and 71.6
+    million nodes, where it does not.
   </p>
-  <p>
-    The second finding is that the simulation needs far more GPU memory than the graph. The CSR matrix stores its values
-    as float32 and the urns are int32, so CuPy promotes the product AU to float64. Every step it therefore rebuilds the
-    matrix in float64, copying the column indices and row pointers along with it, and copies U and the result into
-    float64 as well. At 71.6 million nodes that is 7.7&nbsp;GB of temporaries per step, more than twice the matrix itself.
-    The edge list and stub list left over from growth, a further 5.5&nbsp;GB, also stay allocated although nothing reads
-    them after the CSR build. Allocations peak at 5.6&nbsp;GB at 17.9 million nodes, 11.5&nbsp;GB at 35.8 million and
-    19.4&nbsp;GB at 71.6 million, against 5.0&nbsp;GB of VRAM free to CUDA. The largest run comes close to the 21.8&nbsp;GB the
-    driver allows in total, and CuPy's allocator had to empty its cache to get through the first step.
-  </p>
+  <!-- SCREENSHOT S1 and S2, see performance_analysis/nsight/screenshots.txt in the capstone repo -->
   <figure>
-    <img src="../images/capstone-gpu-footprint.png" width="1625" height="624" alt="Three panels of CUDA memory allocated over time for 17.9, 35.8 and 71.6 million nodes, rising in steps during growth and again at the first P&oacute;lya step, to peaks of 5.6, 11.5 and 19.4 GB against a free-VRAM line at 5.0 GB and a driver limit at 21.8 GB">
+    <img src="../images/polya-capstone/capstone-nsys-step-9M.png" alt="Nsight Systems timeline of one P&oacute;lya step at 8.9 million nodes, in which a 67 ms cuSPARSE kernel fills most of the 93 ms step while DRAM read bandwidth is high and PCIe receive throughput is near zero">
+    <img src="../images/polya-capstone/capstone-nsys-step-72M.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes, in which an 11.5 s cuSPARSE kernel fills most of the 13.4 s step while DRAM read bandwidth is near zero and PCIe receive throughput holds near 25 percent">
     <figcaption>
-      CUDA memory allocated during growth, the CSR build and the P&oacute;lya steps, from the Nsight Systems memory trace.
-      Everything above the orange line lives in system RAM. The dip at the first step of the 71.6 million node run is
-      CuPy releasing its cached blocks after an allocation failed at the driver limit.
+      One P&oacute;lya step in Nsight Systems at 8.9 million nodes (top, 93&nbsp;ms) and at 71.6 million nodes (bottom,
+      13.4&nbsp;s). The rows to compare are DRAM Read Bandwidth and PCIe RX Throughput under GPU Metrics (PCIe RX is the
+      data the GPU reads from system RAM), the kernels under CUDA HW, and the step's NVTX range.
     </figcaption>
   </figure>
   <p>
-    Run as administrator, Nsight also records the driver's own accounting (its WDDM trace) and samples PCIe traffic (GPU
-    Metrics). At 71.6 million nodes the driver keeps 5.4&nbsp;GB of the simulation in VRAM and has demoted 13.8&nbsp;GB to
-    system RAM. During the steps it moves almost nothing between the two, 0.1&nbsp;GB in the first step and none after, so
-    the data is not paged back and forth. Kernels read it where it lies.
+    At both sizes a single kernel takes most of the step. It is cuSPARSE's <code>csrmm_alg1_kernel</code>, which computes
+    the product AU, and it runs for 67&nbsp;ms of a 93&nbsp;ms step at 8.9 million nodes and for 11.5&nbsp;s of a
+    13.4&nbsp;s step at 71.6 million. The graph is 8 times larger, but the kernel is 170 times slower. The GPU Metrics
+    rows show where the difference comes from. At 8.9 million nodes the kernel reads VRAM at about 39% of its peak
+    bandwidth and PCIe is idle. At 71.6 million nodes VRAM reads fall to about 1%, and PCIe receive throughput holds at
+    about 25% of the link for the whole kernel. The kernel is reading its data from system RAM.
+  </p>
+  <p>
+    Unified memory is not involved. No allocation in any trace is managed memory, and on Windows the 1660 Ti cannot
+    migrate pages on demand. Instead, when an ordinary <code>cudaMalloc</code> exceeds free VRAM, the Windows display
+    driver (WDDM) backs the allocation with system RAM, which Task Manager reports as shared GPU memory. On this machine
+    that adds 16.0&nbsp;GB to the card's 5.8&nbsp;GB. The driver can move a whole allocation between the two, but it
+    never fetches pages as a kernel touches them, so a kernel that uses an allocation left in system RAM reads it across
+    PCIe&nbsp;3.0 at 13&nbsp;GB/s instead of from GDDR6 at about 260&nbsp;GB/s.
+  </p>
+  <p>
+    The simulation spills because it needs far more GPU memory than the graph. The CSR matrix stores its values as
+    float32 and the urns are int32, so CuPy promotes the product AU to float64. Every step it therefore rebuilds the
+    matrix in float64, copying the column indices and row pointers along with it, and copies U and the result into
+    float64 as well. At 71.6 million nodes that is 7.7&nbsp;GB of temporaries per step, more than twice the matrix
+    itself. The edge list and stub list left over from growth, a further 5.5&nbsp;GB, also stay allocated although
+    nothing reads them after the CSR build. Allocations peak at 5.6&nbsp;GB at 17.9 million nodes, 11.5&nbsp;GB at 35.8
+    million and 19.4&nbsp;GB at 71.6 million, against 5.0&nbsp;GB of VRAM free to CUDA. At 71.6 million nodes the peak
+    is reached during growth, before the first step. Growth enlarges the edge list, stub list and urn array many times,
+    and CuPy's memory pool keeps every buffer they outgrow for reuse. The run comes close to the 21.8&nbsp;GB the driver
+    allows in total, and CuPy had to release part of that cache to make the first step's float64 copies.
+  </p>
+  <!-- SCREENSHOT S3 -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-nsys-memory-72M.png" alt="Nsight Systems timeline of the whole 71.6 million node run, in which the CUDA memory usage row climbs in steps during growth to 19.4 GB and stays there through the CSR build and the P&oacute;lya steps">
+    <figcaption>
+      The whole 71.6 million node run in Nsight Systems. The Memory usage row under CUDA HW is the total the simulation
+      has allocated on the GPU. It climbs in steps during growth, reaches 19.4&nbsp;GB before the CSR build starts,
+      against about 5&nbsp;GB of VRAM free to CUDA, and stays there through the P&oacute;lya steps. The GPU WDDM SYSMEM
+      row lower down is the driver's count of what it has placed in system RAM, and climbs with it.
+    </figcaption>
+  </figure>
+  <p>
+    Run as administrator, Nsight also records the driver's own accounting (its WDDM trace). At 71.6 million nodes the
+    driver keeps 5.4&nbsp;GB of the simulation in VRAM and has demoted 13.8&nbsp;GB to system RAM. During the steps it
+    moves almost nothing between the two, 0.1&nbsp;GB in the first step and none after, so the data is not paged back
+    and forth. Kernels read it where it lies.
   </p>
   <figure>
-    <img src="../images/capstone-wddm.png" width="1625" height="832" alt="Two panels for 71.6 million nodes, current code and both fixes. Top: GPU memory split into VRAM, flat at about 5.5 GB, and memory demoted to system RAM, 13.8 GB with the current code and 3.3 GB with the fixes. Bottom: PCIe read traffic, a plateau near 25 percent of the link during each step of the current code and short bursts with the fixes">
+    <img src="../images/polya-capstone/capstone-wddm.png" width="1625" height="832" alt="Two panels for 71.6 million nodes, current code and both fixes. Top: GPU memory split into VRAM, flat at about 5.5 GB, and memory demoted to system RAM, 13.8 GB with the current code and 3.3 GB with the fixes. Bottom: PCIe read traffic, a plateau near 25 percent of the link during each step of the current code and short bursts with the fixes">
     <figcaption>
       Top: the simulation's GPU memory as the Windows driver reports it, split into what is resident in VRAM and what it
-      has demoted to system RAM. Bottom: PCIe read traffic sampled by GPU Metrics. With the current code each step sits
+      has demoted to system RAM. Bottom: PCIe read traffic sampled by GPU Metrics. With the original code each step sits
       on a plateau near 25% of the link, the random reads of the sparse product, broken by bursts near the peak where the
-      float64 copies stream through. With both fixes the driver moves 3.3&nbsp;GB into VRAM during the first step. The
-      shaded band is the read probes described below.
+      float64 copies stream through. The second line is the float32 fix described under Further Optimizations, with
+      which the driver moves 3.3&nbsp;GB into VRAM during the first step. The shaded band is the read probes described
+      below.
     </figcaption>
   </figure>
   <p>
@@ -322,7 +338,7 @@
     and indices are themselves in system RAM, as is the float64 copy of U that the product reads from.
   </p>
   <figure>
-    <img src="../images/capstone-residency.png" width="1625" height="780" alt="Two bar charts of measured read bandwidth per GPU buffer at 35.8 and 71.6 million nodes; buffers in VRAM read at about 255 GB/s and buffers in system RAM at about 13 GB/s, with the CSR values and indices in system RAM at 71.6 million nodes">
+    <img src="../images/polya-capstone/capstone-residency.png" width="1625" height="780" alt="Two bar charts of measured read bandwidth per GPU buffer at 35.8 and 71.6 million nodes; buffers in VRAM read at about 255 GB/s and buffers in system RAM at about 13 GB/s, with the CSR values and indices in system RAM at 71.6 million nodes">
     <figcaption>
       Read bandwidth of each buffer after the P&oacute;lya steps. Blue bars are in VRAM and orange bars in system RAM,
       reached over PCIe. The last three rows are the copies made for the product AU.
@@ -342,33 +358,211 @@
   </div>
   <p>
     At 71.6 million nodes each of the 215 million edges is stored twice, and the product reads both columns of U for each
-    of the 429.5 million entries, 859 million random reads from a 1.1&nbsp;GB buffer in system RAM. At 13.6&nbsp;ns each that
-    is 11.7&nbsp;s, and the cuSPARSE kernel took 10.8&nbsp;s of the 12.8&nbsp;s step. Nsight Compute shows that the bus is not
-    full. Each 8-byte read pulls about 43&nbsp;bytes across PCIe, and one product moves 44.7&nbsp;GB in all, but at only
+    of the 429.5 million entries, 859 million random reads from a 1.1&nbsp;GB buffer in system RAM. At 13.6&nbsp;ns each
+    that is 11.7&nbsp;s, close to the 11.5&nbsp;s the kernel took. Nsight Compute shows that the bus is not full. Each
+    8-byte read pulls about 43&nbsp;bytes across PCIe, and one product moves 44.7&nbsp;GB in all, but at only
     3.9&nbsp;GB/s, less than a third of what the link reaches in a sequential read. The reads wait on round trips across
-    the bus, not on its width. The Ryzen runs SciPy's single-threaded sparse product at 15.0&nbsp;s per step. Both
-    processors are then making random reads from the same system RAM, the GPU across PCIe, which is why the 1660 Ti ends
-    up at CPU speed.
+    the bus, not on its width.
   </p>
   <p>
-    Two changes test this explanation. The first casts U to float32 before the product, so cuSPARSE uses the stored
-    float32 matrix and makes no per-step copy. This is exact while super-urn counts stay below 2<sup>24</sup>, about
-    16.8 million, and beyond that rounds the drawing probabilities by less than one part in 10<sup>7</sup>. The second
-    frees the edge and stub lists after the CSR build. With both, a step at 35.8 million nodes needs 4.3&nbsp;GB,
-    everything stays in VRAM, and the step takes 0.35&nbsp;s instead of 1.5&nbsp;s (3.7&nbsp;s in the benchmark), 20&times;
-    faster than the CPU. At 71.6 million nodes the graph alone outgrows free VRAM, but the operands of the product,
-    about 4.5&nbsp;GB, now nearly fit, and the driver moves 3.3&nbsp;GB into VRAM during the first step. The product's PCIe
-    traffic then falls from 44.7&nbsp;GB to 1.6&nbsp;GB and its time from 11.6&nbsp;s to 0.53&nbsp;s. Later steps take 1.7 to
-    2.3&nbsp;s across runs, 6.5 to 8.8&times; faster than the CPU.
+    A small share of such reads is enough to slow the whole kernel. At 35.8 million nodes the driver has left the
+    float64 copy of the matrix, and the array the product writes into, in system RAM. The kernel reads 27.4&nbsp;GB from
+    VRAM and 3.4&nbsp;GB across PCIe, and its 1.5&nbsp;GB of writes go almost entirely to system RAM. The kernel takes
+    574&nbsp;ms, 8.7 times as long as at 8.9 million nodes for 4 times as many nodes. Its warps wait 393 cycles per
+    instruction instead of 180, three quarters of that for loads to return, and the VRAM reads that make up the rest of
+    its traffic slow to 48&nbsp;GB/s.
   </p>
+  <!-- SCREENSHOT S4a and S4b -->
   <figure>
-    <img src="../images/capstone-step-time.png" width="1430" height="728" alt="Log-log plot of seconds per P&oacute;lya step against nodes; the CPU rises linearly to 15 s, the benchmarked 1660 Ti rises linearly to 0.19 s at 17.9 million nodes then jumps to meet the CPU, and the fixed 1660 Ti stays low to 0.35 s at 35.8 million and 2.3 s at 71.6 million">
+    <img src="../images/polya-capstone/capstone-ncu-memory-9M.png" alt="Nsight Compute memory chart for the cuSPARSE kernel at 8.9 million nodes: 7.48 GB read from device memory, 145 MB written to it, nothing to or from system memory">
+    <img src="../images/polya-capstone/capstone-ncu-memory-36M.png" alt="Nsight Compute memory chart for the cuSPARSE kernel at 35.8 million nodes: 27.36 GB read from device memory and 3.35 GB from system memory, 1.49 GB written to system memory and 263 KB to device memory">
     <figcaption>
-      Time per P&oacute;lya step. Below 17.9 million nodes the two changes make little difference. Near the spill point the
-      unmodified code is erratic: at 17.9 million nodes the benchmark measured 0.19&nbsp;s and 0.76&nbsp;s per step in two
-      runs and a re-run 1.19&nbsp;s, depending on which copies the driver left in system RAM.
+      Nsight Compute's memory chart for the cuSPARSE kernel at 8.9 million nodes (top) and 35.8 million nodes (bottom).
+      The header gives the kernel's run time and the arrows the data it moved in one call. At 8.9 million nodes the kernel reads 7.5&nbsp;GB from device memory (VRAM) in
+      66&nbsp;ms, writes 145&nbsp;MB back to it, and moves nothing to or from system memory. At 35.8 million nodes it
+      reads 27.4&nbsp;GB from VRAM in 574&nbsp;ms and 3.4&nbsp;GB from system memory over PCIe. Its 1.5&nbsp;GB of writes
+      go to system memory and only 263&nbsp;KB reach VRAM, because the array it writes into is in system RAM.
     </figcaption>
   </figure>
+  <p>
+    The Ryzen runs SciPy's single-threaded sparse product at 15.0&nbsp;s per step. Both processors are then making random
+    reads from the same system RAM, the GPU across PCIe, which is why the 1660 Ti ends up at CPU speed. The slowdown
+    starts where the footprint passes free VRAM. At 17.9 million nodes it is already at the limit, and step times there
+    are erratic: the benchmark measured 0.19&nbsp;s and 0.76&nbsp;s per step in two runs and a re-run 1.19&nbsp;s,
+    depending on which copies the driver left in system RAM. At 35.8 million nodes the footprint is more than twice free
+    VRAM.
+  </p>
+
+  <h2>Further Optimizations</h2>
+  <p>
+    The profile points to one cost. Every P&oacute;lya step makes a random read of U for each stored edge, and how long
+    those reads take depends on where U and the matrix live. Three changes follow from that. The step should use less
+    GPU memory, so that everything it touches stays in VRAM. When the graph cannot fit, only data that is read in order
+    should be left on the far side of PCIe. And the random reads can be made cheaper by giving neighbouring nodes nearby
+    positions in memory. Each change below was traced with the same Nsight setup as above.
+  </p>
+
+  <h3>Removing the float64 copies</h3>
+  <p>
+    Two small changes test the explanation directly. The first casts U to float32 before the product, so cuSPARSE uses
+    the stored float32 matrix and makes no per-step copy. This is exact while super-urn counts stay below
+    2<sup>24</sup>, about 16.8 million, and beyond that rounds the drawing probabilities by less than one part in
+    10<sup>7</sup>. The second frees the edge and stub lists after the CSR build. With both, a step at 35.8 million nodes
+    needs 4.3&nbsp;GB, everything stays in VRAM, and the step takes 0.35&nbsp;s instead of 1.5&nbsp;s. At 71.6 million
+    nodes the graph alone outgrows free VRAM, but the operands of the product, about 4.5&nbsp;GB, now nearly fit, and the
+    driver moves 3.3&nbsp;GB into VRAM during the first step. The product's PCIe traffic falls from 44.7&nbsp;GB to
+    1.6&nbsp;GB and its time from 11.6&nbsp;s to 0.53&nbsp;s. Later steps take 1.7 to 2.3&nbsp;s, 6.5 to 8.8&times; faster
+    than the CPU, but part of the matrix is still in system RAM and the step still writes its result in float64.
+  </p>
+
+  <h3>A fused gather-and-draw kernel</h3>
+  <p>
+    The step never needs the super urns themselves, only each node's red fraction for one comparison. cuSPARSE
+    nonetheless writes all of S&nbsp;=&nbsp;(A&nbsp;+&nbsp;I)U to memory in float64, and further kernels then divide it
+    and compare. The product and the draw are now a single custom CUDA kernel, compiled at run time through CuPy's
+    <code>RawModule</code>. Four threads share each row of the CSR matrix. They walk the row's column indices, read each
+    neighbour's red and black counts from U as one 8-byte load, and add them into 64-bit integers. The four partial sums
+    are combined with warp shuffles, the node's own urn is added, and one thread compares a uniform random number with
+    the red fraction and writes the draw. A second small kernel adds &Delta; to the drawn column of U.
+  </p>
+  <p>This removes everything the profile found the step paying for.</p>
+  <ul>
+    <li>The matrix keeps no values array, since every stored value is 1. Only the row pointers and column indices
+      remain, 2.0&nbsp;GB at 71.6 million nodes instead of 3.7&nbsp;GB.</li>
+    <li>There are no float64 copies of A or U and no float64 result, which together came to 7.7&nbsp;GB per step.</li>
+    <li>U is read in row-major order, one load per neighbour. cuSPARSE reads it column by column, one load per neighbour
+      per colour, so the fused kernel halves the random reads even when everything fits in VRAM.</li>
+    <li>The edge and stub lists are freed once the CSR matrix is built.</li>
+  </ul>
+  <p>
+    The sums are exact and the final division and comparison are the same float64 operations as before, so the new step
+    produces bit-for-bit the same urns as the old one from the same random numbers. This was checked at sizes from 1.1
+    to 71.6 million nodes, with and without finite memory, and with random reinforcement.
+  </p>
+  <!-- SCREENSHOT S5 -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-nsys-step-72M-fused.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes with the fused kernel, in which a 0.28 s draw kernel fills the 0.29 s step while DRAM read bandwidth sits near 39 percent and PCIe is idle">
+    <figcaption>
+      One P&oacute;lya step at 71.6 million nodes with the fused kernel, with the same rows as the 71.6 million node
+      step above. The step takes 0.29&nbsp;s, of which the draw kernel is 0.28&nbsp;s. DRAM read bandwidth sits near 39%
+      and PCIe is idle.
+    </figcaption>
+  </figure>
+  <p>
+    At 71.6 million nodes the steps now use about 3&nbsp;GB of GPU memory and every buffer stays in VRAM. A step takes
+    0.29&nbsp;s instead of 13.4&nbsp;s, 46&times; faster than before and 51&times; faster than the CPU. Even at 8.9
+    million nodes, where the original code also fits in VRAM, the kernel takes 32&nbsp;ms against cuSPARSE's 67&nbsp;ms,
+    because it makes half as many random reads.
+  </p>
+  <figure>
+    <img src="../images/polya-capstone/capstone-step-time-fused.png" width="1430" height="754" alt="Log-log plot of seconds per P&oacute;lya step against nodes from 1.1 to 143.2 million. The CPU rises to 15.2 s at 71.6 million nodes and the original 1660 Ti code jumps up to meet it at 15.0 s. The float32 fix reaches 2.3 s, the fused kernel stays on a straight line to 296 ms at 71.6 million nodes and 583 ms at 143.2 million, and breadth-first node order lowers it to 210 ms at 71.6 million">
+    <figcaption>
+      Time per P&oacute;lya step against network size. The fused kernel stays on a straight line through 71.6 million
+      nodes, and the point at 143.2 million nodes is the zero-copy placement described below. The dotted line is the
+      fused kernel on a graph renumbered in breadth-first order, which is not yet part of the simulator.
+    </figcaption>
+  </figure>
+  <p>
+    Nsight Compute shows what limits the kernel now. It reads VRAM at 113&nbsp;GB/s, 41% of the peak, and its warps
+    spend 90% of their cycles waiting for loads to return, the same pattern cuSPARSE shows at 8.9 million nodes. Each
+    8-byte read of U brings in at least a 32-byte sector, and with 71.6 million rows only 5.7% of reads hit in the
+    1.5&nbsp;MB L2 cache. The kernel moves 31&nbsp;GB per step to use 3.4&nbsp;GB of urn counts, so it is bound by the
+    latency of random reads from VRAM.
+  </p>
+  <!-- SCREENSHOT S6 -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-ncu-fused-72M-SoLT.png" alt="Nsight Compute Speed Of Light section for the fused kernel at 71.6 million nodes: 275 ms, memory throughput 41 percent of peak, compute throughput 14 percent">
+    <img src="../images/polya-capstone/capstone-ncu-fused-72M-MWA.png" alt="Nsight Compute memory workload analysis for the fused kernel at 71.6 million nodes: 113 GB/s, L2 hit rate 5.7 percent, 30.8 GB read from device memory and nothing to or from system memory">
+    <figcaption>
+      Nsight Compute on the fused kernel at 71.6 million nodes: the Speed Of Light summary (top) and the memory workload
+      analysis (bottom). The kernel runs for 275&nbsp;ms at 41% of the peak DRAM bandwidth, 113&nbsp;GB/s. All
+      30.8&nbsp;GB it reads come from VRAM, and only 5.7% of its L2 lookups hit.
+    </figcaption>
+  </figure>
+
+  <h3>Graphs larger than VRAM</h3>
+  <p>
+    The fused kernel reads two kinds of data. It reads U at random, but it reads the column indices once per step, in
+    order. A random read across PCIe pays a full round trip, while a sequential stream can run close to the speed of the
+    link. So when the graph does not fit, only the column indices are placed in system RAM, in pinned (page-locked) host
+    memory, and the kernel reads them directly across PCIe. U and the row pointers stay in VRAM. The choice is made
+    automatically when the CSR matrix is built, from free VRAM and the size of the graph.
+  </p>
+  <p>
+    Forcing this placement at 71.6 million nodes shows what it costs. PCIe receive throughput holds at about 70% of the
+    link while the kernel runs, more than twice the rate of the original spilled step, and the step takes 0.287&nbsp;s
+    against 0.293&nbsp;s with the indices in VRAM. The index reads overlap with the slower random reads of U, so the bus
+    carries the matrix at no cost. This makes graphs larger than VRAM practical. At 143.2 million nodes, with 859 million
+    stored entries and 3.4&nbsp;GB of indices, a step takes 0.58&nbsp;s.
+  </p>
+  <p>
+    The obvious alternative is to stream the matrix explicitly, copying it to VRAM in blocks on one CUDA stream while a
+    second stream processes the previous block. With two 128&nbsp;MB buffers this took 0.425&nbsp;s per step. The copies
+    ran at 13.1&nbsp;GB/s, but in the trace they never overlapped with the kernels. The GPU copied two blocks, then
+    processed two blocks, and so on, so the step took the copy time and the compute time added together, 132&nbsp;ms plus
+    277&nbsp;ms. Even with perfect overlap it could at best have matched reading the indices in place, which gets the
+    overlap for free, one load at a time.
+  </p>
+  <!-- SCREENSHOT S7a and S7b -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-nsys-zerocopy-72M.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes with the column indices in pinned system RAM, in which one 0.27 s kernel runs while PCIe receive throughput holds near 70 percent">
+    <img src="../images/polya-capstone/capstone-nsys-stream-72M.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes with explicit streaming, in which pairs of 128 MB copies alternate with pairs of kernels and never run at the same time">
+    <figcaption>
+      Two ways to keep the matrix in system RAM at 71.6 million nodes. Top: the kernel reads the column indices directly
+      from pinned memory, and PCIe stays busy for the whole 0.29&nbsp;s step. Bottom: the indices are copied to VRAM in
+      128&nbsp;MB blocks on a second stream, but the copies (memory row) and the kernels alternate instead of overlapping,
+      and the step takes 0.42&nbsp;s. The kernel is labelled draw2 here: it is the prototype of the fused kernel, which
+      can work on one block of rows at a time.
+    </figcaption>
+  </figure>
+
+  <h3>Locality</h3>
+  <p>
+    Most of each sector the kernel fetches is wasted because neighbouring nodes rarely sit near each other in U. Growth
+    order does not help, since preferential attachment draws targets from across all earlier nodes. At 17.9 million nodes
+    the growth order gave the same step time as a random order (71.4&nbsp;ms against 73.2&nbsp;ms), and sorting the nodes
+    by degree did not help either. Renumbering the nodes in breadth-first order from the largest hub puts most of each
+    node's neighbours a short distance away in U. On that numbering the kernel's L2 hit rate rises from 5.7% to 9.7%, its
+    L1 hit rate from 12.7% to 21.9%, and the data it reads from VRAM falls from 30.8 to 22.5&nbsp;GB, so a step takes 0.21&nbsp;s instead
+    of 0.29&nbsp;s, 28% faster. Reverse Cuthill&ndash;McKee ordering gives the same result.
+  </p>
+  <!-- SCREENSHOT S8 -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-ncu-locality-SoLT.png" alt="Nsight Compute Speed Of Light comparison of the fused kernel on the breadth-first numbered graph against growth order: 193 ms against 275 ms">
+    <img src="../images/polya-capstone/capstone-ncu-locality-MWA.png" alt="Nsight Compute memory workload comparison for the breadth-first numbered graph: L1 hit rate 21.9 percent and L2 hit rate 9.7 percent, each up about 70 percent, and 22.45 GB read from device memory, down 27 percent">
+    <figcaption>
+      Nsight Compute comparing the fused kernel (draw2, as above) on the breadth-first numbered graph, the current
+      result, against the same kernel on the graph in growth order, the baseline. The kernel takes 193&nbsp;ms instead of
+      275&nbsp;ms, 30% less. Its L1 and L2 hit rates rise by about 70%, and it reads 27% less from VRAM, 22.5&nbsp;GB
+      instead of 30.8&nbsp;GB.
+    </figcaption>
+  </figure>
+  <p>
+    Renumbering is not part of the simulator yet. The breadth-first search and relabelling took 98&nbsp;s with SciPy on
+    the CPU, more than the 8&nbsp;s it saves over 100 steps, and the interventions would need node IDs mapped back. The
+    gain is also limited by the network itself. A Barab&aacute;si&ndash;Albert graph is a small world, so a breadth-first
+    search reaches most of the graph within a few levels and no numbering keeps every neighbourhood close. Propagation
+    blocking, which bins the reads by destination so that they become sequential, would need several gigabytes of
+    buffers, more than fits beside a 71.6 million node graph on a 6&nbsp;GB card.
+  </p>
+
+  <h3>Results</h3>
+  <p>
+    The benchmark from the Performance section, re-run with the fused kernel:
+  </p>
+  <div style="overflow-x: auto">
+  <table>
+    <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti, original</th><th>GTX 1660 Ti, fused kernel</th><th>A100, original</th></tr>
+    <tr><td>2.2 M</td><td>6.7 M</td><td>38.2 s</td><td>3.7 s</td><td>2.2 s</td><td>1.7 s</td></tr>
+    <tr><td>17.9 M</td><td>53.7 M</td><td>348 s</td><td>25.3 s</td><td>14.2 s</td><td>9.3 s</td></tr>
+    <tr><td>71.6 M</td><td>215 M</td><td>1,565 s</td><td>1,557 s</td><td>90.7 s</td><td>37.9 s</td></tr>
+  </table>
+  </div>
+  <p>
+    The 1660 Ti now finishes the largest run in 90.7&nbsp;s instead of 1,557&nbsp;s, 17&times; faster than the CPU. The
+    100 P&oacute;lya steps take 29.6&nbsp;s of that, and growing the network and building the CSR matrix take the other
+    61&nbsp;s, so growth is now the slowest part of the pipeline.
+  </p>
 
   <h2>Analysis</h2>
   <p>
@@ -377,7 +571,7 @@
     mathematics behind each, and one representative comparison.
   </p>
   <figure>
-    <img src="../images/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps, with most nodes moving to over 90% red by about step 400">
+    <img src="../images/polya-capstone/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps, with most nodes moving to over 90% red by about step 400">
     <figcaption>
       The distribution of per-node red fractions at each step in one run on a 65,600-node network, with red balls
       injected at step 144. Before step 72 the urns are still growing, so the fractions they can take shift every step,
@@ -453,10 +647,11 @@
 
   <h2>What I'd do next</h2>
   <ul>
-    <li>Split work between the CPU and GPU, keeping graphs larger than VRAM in system RAM and streaming blocks of the
-      sparse matrix to the GPU, instead of leaving the Windows driver to spill allocations into shared memory.</li>
-    <li>Cut graph memory further. Every value stored in the CSR matrix is 1, so its 32-bit value array could be booleans or
-      dropped entirely, roughly halving the matrix.</li>
+    <li>Bring network growth and the CSR build up to the speed of the P&oacute;lya step. Growth still allocates about
+      19&nbsp;GB at 71.6 million nodes, much of it CuPy's cache of buffers it has outgrown, and growth and the build now
+      take twice as long as 100 steps.</li>
+    <li>Make node renumbering cheap enough to use, for example by running the breadth-first search on the GPU or by
+      placing nodes in a local order as the network grows.</li>
     <li>Let the network keep growing during the simulation, with growth rules beyond Bernoulli trials.</li>
     <li>Explore adding more colours to the process, and different intervention strategies.</li>
   </ul>

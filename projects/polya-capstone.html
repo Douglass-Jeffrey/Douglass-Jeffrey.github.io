@@ -17,7 +17,7 @@
   </p>
 
   <figure>
-    <video controls muted loop playsinline preload="none" width="1280" height="914" poster="../images/polya-capstone/capstone-animation-poster.jpg">
+    <video style="width: 960px" controls muted loop playsinline preload="none" width="1280" height="914" poster="../images/polya-capstone/capstone-animation-poster.jpg">
       <source src="../images/polya-capstone/capstone-animation.mp4" type="video/mp4">
     </video>
     <figcaption>
@@ -246,16 +246,18 @@
   -->
   <p>
   </p>
-  <div style="overflow-x: auto">
-  <table>
-    <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti</th><th>A100</th></tr>
-    <tr><td>2.2 M</td><td>6.7 M</td><td>38.2 s</td><td>3.7 s</td><td>1.7 s</td></tr>
-    <tr><td>17.9 M</td><td>53.7 M</td><td>348 s</td><td>25.3 s</td><td>9.3 s</td></tr>
-    <tr><td>71.6 M</td><td>215 M</td><td>1,565 s</td><td>1,557 s</td><td>37.9 s</td></tr>
-  </table>
-  </div>
   <figure>
-    <img src="../images/polya-capstone/capstone-compute-time.png" width="1400" height="716" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
+    <div class="row">
+      <img src="../images/polya-capstone/capstone-compute-time.png" width="1400" height="716" style="--w: 1050" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
+      <div style="overflow-x: auto">
+      <table>
+        <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti</th><th>A100</th></tr>
+        <tr><td>2.2 M</td><td>6.7 M</td><td>38.2 s</td><td>3.7 s</td><td>1.7 s</td></tr>
+        <tr><td>17.9 M</td><td>53.7 M</td><td>348 s</td><td>25.3 s</td><td>9.3 s</td></tr>
+        <tr><td>71.6 M</td><td>215 M</td><td>1,565 s</td><td>1,557 s</td><td>37.9 s</td></tr>
+      </table>
+      </div>
+    </div>
     <figcaption>
       Note that the 1660 Ti is about 14&times; faster than the CPU until performance decays around 3&times;10<sup>7</sup> nodes.
       The A100 finishes the largest run about 41&times; faster than the CPU. 
@@ -362,10 +364,12 @@
     cycles between instructions instead of 180, and three quarters of that time is spent waiting for loads to return.
   </p>
   <figure>
-    <img src="../images/polya-capstone/capstone-ncu-memory-9M.png" alt="Nsight Compute memory chart for the cuSPARSE kernel at 8.9 million nodes: 7.48 GB read from device memory, 145 MB written to it, nothing to or from system memory">
-    <img src="../images/polya-capstone/capstone-ncu-memory-36M.png" alt="Nsight Compute memory chart for the cuSPARSE kernel at 35.8 million nodes: 27.36 GB read from device memory and 3.35 GB from system memory, 1.49 GB written to system memory and 263 KB to device memory">
+    <div class="row">
+      <img src="../images/polya-capstone/capstone-ncu-memory-9M.png" style="--w: 740" alt="Nsight Compute memory chart for the cuSPARSE kernel at 8.9 million nodes: 7.48 GB read from device memory, 145 MB written to it, nothing to or from system memory">
+      <img src="../images/polya-capstone/capstone-ncu-memory-36M.png" style="--w: 740" alt="Nsight Compute memory chart for the cuSPARSE kernel at 35.8 million nodes: 27.36 GB read from device memory and 3.35 GB from system memory, 1.49 GB written to system memory and 263 KB to device memory">
+    </div>
     <figcaption>
-      Nsight Compute's memory chart for the cuSPARSE kernel at 8.9 million nodes (top) and 35.8 million nodes (bottom).
+      Nsight Compute's memory chart for the cuSPARSE kernel at 8.9 million nodes (left) and 35.8 million nodes (right).
       The header gives the kernel's run time, and the label on each arrow gives how much data the kernel moved in one
       call. Device Memory is the card's VRAM and System Memory is system RAM, reached over PCIe. Arrows pointing into L2
       are reads and arrows pointing out of it are writes. At 8.9 million nodes the kernel reads 7.5&nbsp;GB from VRAM in
@@ -390,7 +394,8 @@
     bottleneck. The first makes the step use far less GPU memory, so that everything it reads stays in VRAM. The second
     makes the random reads cheaper, by numbering the nodes so that neighbours sit close together in memory.
     The third handles graphs too large for VRAM even after the first change, by leaving only data that is read
-    in order on the far side of PCIe. Each change was traced with the same Nsight setup as above.
+    in order on the far side of PCIe. The last section combines these with streaming from RAM and the drive to run a
+    network of one billion nodes. Each change was traced with the same Nsight setup as above.
   </p>
 
   <h3>A fused gather-and-draw kernel</h3>
@@ -448,22 +453,23 @@
       against about 1% before, and PCIe RX Throughput stays at zero because nothing is read from system RAM.
     </figcaption>
   </figure>
+  <figure>
+    <div class="row" style="align-items: flex-end">
+      <img src="../images/polya-capstone/capstone-ncu-fused-72M-SoLT.png" style="--w: 740" alt="Nsight Compute Speed Of Light section for the fused kernel at 71.6 million nodes: 275 ms, memory throughput 41 percent of peak, compute throughput 14 percent">
+      <img src="../images/polya-capstone/capstone-ncu-fused-72M-MWA.png" style="--w: 740" alt="Nsight Compute memory workload analysis for the fused kernel at 71.6 million nodes: 113 GB/s, L2 hit rate 5.7 percent, 30.8 GB read from device memory and nothing to or from system memory">
+    </div>
+    <figcaption>
+      Nsight Compute on the fused kernel at 71.6 million nodes: the Speed Of Light summary (left), which compares the
+      kernel's throughput with the GPU's peak, and the memory chart (right). The kernel runs for 275&nbsp;ms and uses
+      41% of the peak VRAM bandwidth, 113&nbsp;GB/s. All 30.8&nbsp;GB it reads come from VRAM, and nothing moves to or
+      from system RAM. Only 5.7% of its requests to the L2 cache find their data already there.
+    </figcaption>
+  </figure>
   <p>
     Nsight Compute confirms that nothing crosses PCIe any more. The fused kernel reads all 30.8&nbsp;GB of its data from
     VRAM and moves nothing to or from system RAM. For comparison, cuSPARSE at half this size, 35.8 million nodes, read
     3.4&nbsp;GB from system RAM and wrote 1.5&nbsp;GB to it.
   </p>
-  <!-- SCREENSHOT S6 -->
-  <figure>
-    <img src="../images/polya-capstone/capstone-ncu-fused-72M-SoLT.png" alt="Nsight Compute Speed Of Light section for the fused kernel at 71.6 million nodes: 275 ms, memory throughput 41 percent of peak, compute throughput 14 percent">
-    <img src="../images/polya-capstone/capstone-ncu-fused-72M-MWA.png" alt="Nsight Compute memory workload analysis for the fused kernel at 71.6 million nodes: 113 GB/s, L2 hit rate 5.7 percent, 30.8 GB read from device memory and nothing to or from system memory">
-    <figcaption>
-      Nsight Compute on the fused kernel at 71.6 million nodes: the Speed Of Light summary (top), which compares the
-      kernel's throughput with the GPU's peak, and the memory chart (bottom). The kernel runs for 275&nbsp;ms and uses
-      41% of the peak VRAM bandwidth, 113&nbsp;GB/s. All 30.8&nbsp;GB it reads come from VRAM, and nothing moves to or
-      from system RAM. Only 5.7% of its requests to the L2 cache find their data already there.
-    </figcaption>
-  </figure>
 
   <h3>Locality</h3>
   <p>
@@ -473,7 +479,7 @@
   </p>
   <p>
     This bottleneck is the result of poor data access patterns that are inherent to large random graphs. The GPU runs
-    its threads in groups of 32 called warps, and the threads of a warp execute each instruction together, so a load
+    its threads in groups of 32 (warp), and the threads of a warp execute each instruction together, so a load
     instruction requests 32 addresses at once. The load is handled in the following stages:
   </p>
   <ol>
@@ -489,38 +495,67 @@
   </ol>
   <p>
     In the fused kernel each warp handles 8 rows, four threads per row, so a load of U requests the urns of up to 32
-    different neighbours spread across the array. These rarely share a sector, so the load becomes 32 separate requests,
+    different neighbours spread across the array. Because each node's neighbours are picked at random from across the graph, these 32 urns 
+    almost never share a sector with each other, so the load becomes 32 separate requests,
     each using 8 bytes of its sector. U takes 573&nbsp;MB at 71.6 million nodes, almost 400 times the size of the L2
     cache, so a sector is usually evicted before another row reads a nearby urn, and only 5.7% of L2 lookups hit.
     Except for the hubs, whose urns are read often enough to stay cached, nearly all of the kernel's 429.5 million
     neighbour reads go to VRAM and fetch 64 bytes to use 8, about 27.5&nbsp;GB in total. Together with the roughly
     3&nbsp;GB of arrays read in order, this accounts for the 30.8&nbsp;GB the kernel reads from VRAM.
   </p>
+  <!-- Interesting, but kind of breaks the flow. 
   <p>
     A warp cannot continue until all 32 of its values have arrived, so each load takes as long as its slowest read,
     several hundred cycles when it goes to VRAM. The SM switches to other warps in the meantime, but since they all make
     the same scattered reads, they all end up waiting. As a result the warps spend 90% of their time waiting on loads
     while VRAM runs well below its peak bandwidth.
   </p>
+  -->
   <p>
-    The reads are scattered because nodes are numbered in the order they were added, and preferential attachment
-    connects each new node to earlier nodes from across the whole graph. At 17.9 million nodes the growth order gave
-    about the same step time as a random numbering, 71.4&nbsp;ms against 73.2&nbsp;ms, and sorting the nodes by degree
-    did not help either. Renumbering the nodes in breadth-first order from the largest hub does help. The hub becomes
-    node 0, its neighbours take the next numbers, then their neighbours, and so on. Most of a node's neighbours then sit
-    close together in U, so more of them share sectors within a load, and their sectors are more likely to still be
-    cached when they are read.
+    So speeding up the simulator becomes a problem of improving memory access patterns, increasing the amount of useful information 
+    that is fetched on each load. One way to do this is to renumber the nodes so that the urns read by nearby rows sit in the 
+    same sectors. Finding the best numbering is an NP-hard problem, but there exist heuristics that 
+    find good numberings.
   </p>
   <p>
-    On the renumbered graph, the kernel's L2 hit rate rises from 5.7% to 9.7% and its L1 hit rate from 12.7% to 21.9%,
+    For this application one method is numbering the nodes in breadth-first-search (BFS) order from the largest hub.
+    BFS gives each node's unvisited neighbours consecutive numbers, so nearby rows tend to share neighbours or have
+    neighbours numbered close together, and the urns requested by one load fall in fewer sectors.
+    On the BFS reordered graph, the kernel's L2 hit rate rises from 5.7% to 9.7% and its L1 hit rate from 12.7% to 21.9%,
     and the data it reads from VRAM falls from 30.8&nbsp;GB to 22.5&nbsp;GB. The kernel takes 193&nbsp;ms instead of
-    275&nbsp;ms, and a full step 0.21&nbsp;s instead of 0.29&nbsp;s, 28% faster. Reverse Cuthill&ndash;McKee ordering, a
-    standard method for clustering a sparse matrix's entries near its diagonal, gives the same result.
+    275&nbsp;ms, and a full step 0.21&nbsp;s instead of 0.29&nbsp;s, 28% faster. A comparison of the BFS ordered arrangement 
+    against the baseline can be seen in the Nsight Compute screenshots below.
   </p>
-  <!-- SCREENSHOT S8 -->
+  <p>
+    I also tested other orderings at 17.9 million nodes, shown in the table below. A random numbering and sorting the
+    nodes by degree performed about the same as the growth order, which is already as scattered as a random numbering.
+    Sorting by degree only groups the hubs, whose urns are already cached. Reverse Cuthill&ndash;McKee (RCM) ordering,
+    a standard method for clustering a sparse matrix's entries near its diagonal, matched BFS. RCM is also a
+    breadth-first search, one that visits each node's neighbours in order of degree and then reverses the result, so it
+    groups the nodes the same way. Sorting each row's neighbour list as well made no further difference.
+  </p>
+  <p>
+    The 0.5&nbsp;ms gap between BFS and RCM is within the variation between steps, and at 71.6 million nodes the two
+    take the same time, 210.3&nbsp;ms against 210.5&nbsp;ms per step. I kept BFS because it is simpler to compute.
+  </p>
   <figure>
-    <img src="../images/polya-capstone/capstone-ncu-locality-SoLT.png" alt="Nsight Compute Speed Of Light comparison of the fused kernel on the breadth-first numbered graph against growth order: 193 ms against 275 ms">
-    <img src="../images/polya-capstone/capstone-ncu-locality-MWA.png" alt="Nsight Compute memory workload comparison for the breadth-first numbered graph: L1 hit rate 21.9 percent and L2 hit rate 9.7 percent, each up about 70 percent, and 22.45 GB read from device memory, down 27 percent">
+    <div class="row">
+      <div class="stack" style="--w: 680">
+        <div style="overflow-x: auto">
+        <table>
+          <tr><th>Ordering</th><th>Step time</th><th>Change</th></tr>
+          <tr><td>Growth order (baseline)</td><td>71.4&nbsp;ms</td><td>&ndash;</td></tr>
+          <tr><td>Random</td><td>73.2&nbsp;ms</td><td>+2.5%</td></tr>
+          <tr><td>Degree, highest first</td><td>70.2&nbsp;ms</td><td>&minus;1.8%</td></tr>
+          <tr><td>BFS from the largest hub</td><td>52.1&nbsp;ms</td><td>&minus;27.1%</td></tr>
+          <tr><td>Reverse Cuthill&ndash;McKee</td><td>51.6&nbsp;ms</td><td>&minus;27.8%</td></tr>
+          <tr><td>RCM, neighbour lists sorted</td><td>51.2&nbsp;ms</td><td>&minus;28.3%</td></tr>
+        </table>
+        </div>
+        <img src="../images/polya-capstone/capstone-ncu-locality-SoLT.png" alt="Nsight Compute Speed Of Light comparison of the fused kernel on the breadth-first numbered graph against growth order: 193 ms against 275 ms">
+      </div>
+      <img src="../images/polya-capstone/capstone-ncu-locality-MWA.png" style="--w: 800" alt="Nsight Compute memory workload comparison for the breadth-first numbered graph: L1 hit rate 21.9 percent and L2 hit rate 9.7 percent, each up about 70 percent, and 22.45 GB read from device memory, down 27 percent">
+    </div>
     <figcaption>
       Nsight Compute comparing the fused kernel on the breadth-first numbered graph (the current result) with the same
       kernel on the graph in growth order (the baseline). Each value is shown with its change from the baseline. The
@@ -541,40 +576,41 @@
 
   <h3>Graphs larger than VRAM</h3>
   <p>
-    Freeing memory only goes so far. At 143.2 million nodes even the fused kernel's data does not fit in VRAM: the column
-    indices alone take 3.4&nbsp;GB, and with U, the row pointers and the step's random numbers, the step needs more than
-    the 5.0&nbsp;GB free. Something has to go in system RAM, and the profile shows which array can live there cheaply.
-    The kernel reads U at random, and each random read across PCIe pays a full round trip. The column indices, however,
-    are read once per step, in order, and a stream of in-order reads can run close to the full speed of the link, since
-    each request brings back a full chunk of useful data.
+    With the fused kernel, a step at 71.6 million nodes uses about 3&nbsp;GB of GPU memory, but at 143.2 million nodes
+    the step's data no longer fits in VRAM. The column indices alone take 3.4&nbsp;GB, and with U, the row pointers and
+    the step's random numbers, the step needs more than the 5.0&nbsp;GB free, so part of its data has to be kept in
+    system RAM. Which array gets kept there depends on how the kernel reads it. U is read at random, so placing it in system
+    RAM would make every neighbour read a round trip across PCIe, just like in the original step. The column indices are read
+    once per step, in order, so each request across PCIe returns a block of entries that are all used, and these reads
+    can run close to the full bandwidth of the link.
   </p>
   <p>
-    So when the graph does not fit, the simulator places only the column indices in system RAM, in pinned (page-locked)
-    memory. The operating system cannot move or page out pinned memory, which lets the GPU read it directly across PCIe
-    while the kernel runs, without first copying it into VRAM. U and the row pointers stay in VRAM. The simulator makes
-    this choice automatically when it builds the CSR matrix, by comparing the memory the step will need with the free
+    Therefore when the graph does not fit, the simulator places only the column indices in system RAM, in pinned
+    (page-locked) memory, and keeps U and the row pointers in VRAM. The operating system cannot move or page out pinned
+    memory, so the GPU can read it directly across PCIe while the kernel runs, without first copying it into VRAM. The
+    simulator makes this choice when it builds the CSR matrix, by comparing the memory the step will need with the free
     VRAM.
   </p>
   <p>
-    Forcing this placement at 71.6 million nodes, where the graph would otherwise fit, shows what it costs. In the
-    timeline below, PCIe receive throughput holds at about 70% of the link for the whole kernel, almost three times the
-    rate of the original spilled step, because these reads are in order. Yet the step takes 0.287&nbsp;s, against
-    0.293&nbsp;s with the indices in VRAM. The kernel's time is set by the slower random reads of U, and the reads of
-    the indices happen while it waits on those, so carrying the matrix across the bus adds no time to the step. At 143.2
+    To measure the cost of this placement, I forced it at 71.6 million nodes, where the graph would otherwise fit in
+    VRAM. In the Nsight timeline below, PCIe receive throughput stays at about 70% of the link's capacity for the whole kernel,
+    almost three times the rate during the original step, because the reads are in order. The step takes 0.287&nbsp;s,
+    against 0.293&nbsp;s with the indices in VRAM. The kernel's run time is still set by its random reads of U, and the
+    reads of the indices overlap with them, so moving the indices to system RAM adds no time to the step. At 143.2
     million nodes, with 859 million stored entries, a step takes 0.58&nbsp;s, twice the time at 71.6 million nodes for a
     graph twice the size.
   </p>
   <p>
-    The usual alternative is to stream the matrix explicitly: copy it into VRAM one block at a time on one CUDA stream,
-    while a second stream runs the kernel on the block copied before it. A CUDA stream is a queue of GPU work, and work
-    in different streams is allowed to run at the same time. With two 128&nbsp;MB buffers this took 0.425&nbsp;s per
-    step. The copies ran at 13.1&nbsp;GB/s, close to the 14.8&nbsp;GB/s the link reached in the in-order test above, but
-    the trace shows that they never overlapped with the kernels. The GPU copied two blocks, then processed two blocks,
-    and so on, so the step took the copy time and the compute time added together, 132&nbsp;ms plus 277&nbsp;ms. Even
-    with perfect overlap, streaming could at best have matched reading the indices in place, which overlaps the
-    transfers with the computation on its own, one load at a time.
+    I also tested the more common approach of copying the column indices into VRAM explicitly, using two CUDA streams where
+    one stream copies the
+    indices into VRAM one block at a time while the other runs the kernel on the block copied before it. With two
+    128&nbsp;MB buffers a step took 0.425&nbsp;s. The copies ran at 13.1&nbsp;GB/s, close to the link's 16&nbsp;GB/s,
+    but the trace below shows that they never ran at the same time as the kernels. The GPU copied two blocks, then ran
+    the kernel on two blocks, and so on, so the step took the copy time and the compute time added together,
+    132&nbsp;ms plus 277&nbsp;ms. Even if the copies had fully overlapped with the kernels, the step would still take at
+    least the kernels' 277&nbsp;ms, about the same as reading the indices directly from pinned memory, which already
+    overlaps the transfers with the computation.
   </p>
-  <!-- SCREENSHOT S7a and S7b -->
   <figure>
     <img src="../images/polya-capstone/capstone-nsys-zerocopy-72M-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes with the column indices in pinned system RAM, in which one 0.27 s kernel runs while PCIe receive throughput holds near 70 percent">
     <img src="../images/polya-capstone/capstone-nsys-stream-72M-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step at 71.6 million nodes with explicit streaming, in which pairs of 128 MB copies alternate with pairs of kernels and never run at the same time">
@@ -584,6 +620,98 @@
       into VRAM in 128&nbsp;MB blocks on a second stream. The copies (in the Memory row) and the kernels (in the Kernels
       row) take turns instead of running at the same time, and the step takes 0.42&nbsp;s. Both runs use draw2, the
       prototype of the fused kernel.
+    </figcaption>
+  </figure>
+
+  <h3>One billion nodes</h3>
+  <p>
+    Reading the column indices directly from pinned memory works only while they fit in it, and Windows lets a program
+    pin at most about 15&nbsp;GB of this machine's 32&nbsp;GB of RAM. A Barab&aacute;si&ndash;Albert network of 999.9
+    million nodes has 3.0 billion edges, so its neighbour lists hold 6.0 billion entries, 24&nbsp;GB as 32-bit
+    integers. That is more than can be pinned, and about all of the RAM the operating system leaves free, so part of
+    the graph has to stay on the NVMe drive and be read again on every step. The GPU cannot read pageable (ordinary)
+    RAM or the drive directly, so these parts have to be streamed: copied into pinned memory before the kernel that
+    needs them runs.
+  </p>
+  <p>
+    The rest of the step also has to shrink to fit on the card. Stored as before, U would take 8&nbsp;GB, the step's
+    random numbers another 8&nbsp;GB and the row pointers 8&nbsp;GB, so I wrote a separate, out-of-core version of the
+    step for graphs this large. It keeps only U in VRAM, as 16-bit counts that take 4&nbsp;GB. Sixteen bits hold up to
+    65,535 balls of each colour, and the step flags any count that would pass that limit instead of letting it wrap
+    around. The random numbers are computed inside the kernel from the seed, the step and the node's index, using a
+    counter-based generator (Philox), and each draw is stored as a single bit. Finite memory needs each node's last 72
+    draws, which are kept as bits in a 9&nbsp;GB file on the drive. Each step reads the row of draws from 72 steps
+    earlier, so that those balls can be taken back out, and writes the new row, 125&nbsp;MB each way. The graph is
+    processed in blocks of rows of about 96&nbsp;MB, with one kernel launch per block. The row pointers are stored as each node's degree in one
+    byte, with a short list for the nodes with 255 or more neighbours, and are turned into 32-bit offsets on the GPU
+    just before each block's kernel runs. Given the same random numbers, this version produces the same urns as the
+    simulator after every step, which I checked at 17.9 and 71.6 million nodes.
+  </p>
+  <p>
+    At 999.9 million nodes the neighbour lists form 239 blocks. In the run below, 139 of them (13.9&nbsp;GB) stay in
+    pinned memory and are read in place, as at 143.2 million nodes. Another 53 blocks (5.3&nbsp;GB) are kept in
+    pageable RAM, and the remaining 47 (4.7&nbsp;GB) are read from the drive on every step. Four CPU threads copy
+    these blocks, from RAM or straight from the drive, into a ring of six pinned buffers, up to four blocks ahead of
+    the kernel, and the kernel reads each buffer in place.
+    A buffer is refilled only after the kernel reading it has finished. Because the CPU does the copying instead of the
+    GPU, the copies run at the same time as the kernels, which did not happen with the two-stream version above. The
+    drive reads at 1.6&nbsp;GB/s, so its 4.7&nbsp;GB take about 2.9&nbsp;s of each step, less than the 3.75&nbsp;s the
+    kernels take.
+  </p>
+  <p>
+    The simulator's growth step cannot build a network this large either, so I also wrote an out-of-core version of
+    it that writes the graph to the drive instead of keeping it in GPU memory. It makes the same random choices as the
+    growth step, and produces the same graph for the same seed, which I checked at 1.1 and 17.9 million nodes. It
+    generated the 999.9 million node network in 71&nbsp;s, and the step engine loaded it in 25&nbsp;s.
+  </p>
+  <p>
+    With this, I ran the simulation on the 999.9 million node network for 864 steps with a memory of M&nbsp;=&nbsp;72
+    steps, the settings we used in our experiments, and no interventions, which the out-of-core version does not yet
+    support. The 864 steps took 61 minutes, a median of 4.22&nbsp;s per step. The first 72 steps took 4.01&nbsp;s each,
+    and reading back the draws from 72 steps earlier added about 0.2&nbsp;s per step from then on. The whole run,
+    including loading the network and recording the distribution of red fractions after every step, took 65 minutes.
+    A step takes about 15 times as long as at 71.6 million nodes, for 14 times as many nodes, and less than a third of
+    the 13.4&nbsp;s the original code took for one step at 71.6 million nodes.
+  </p>
+  <p>
+    The figure below shows the distribution of red fractions over the run. Before step 72 the urns are still growing,
+    so the fractions they can take change every step. After that the distribution narrows, and by about step 200 it
+    stops changing. It stays centred on one half, with 85% of nodes between 40% and 60% red, and at the end only 4,422
+    of the 999.9 million nodes are 80% red or more, with as many at 20% or less. Without an intervention neither colour
+    takes over: each urn holds only its last 72 draws, and each draw depends on the balls across the node's whole
+    neighbourhood, so no imbalance builds up.
+  </p>
+  <!-- Heatmap removed for now.
+  <figure>
+    <img src="../images/polya-capstone/capstone-heatmap-1b.png" width="1400" height="809" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps on the 999.9 million node network, in which the distribution narrows around one half by about step 200 and then stays the same">
+    <figcaption>
+      The distribution of per-node red fractions at each step of the 864-step run on the 999.9 million node network,
+      with finite memory (M&nbsp;=&nbsp;72) and no intervention. After warm-up every urn holds 74 balls, so the
+      fractions sit on the grid k/74, and the horizontal stripes come from bins of width 0.02 holding either one or two
+      of these values.
+    </figcaption>
+  </figure>
+  -->
+  <p>
+    The Nsight Systems trace below shows one step on the same network without finite memory, from an earlier benchmark
+    in which more RAM was free: 6.2&nbsp;GB of the graph was kept in RAM and 3.8&nbsp;GB was read from the drive, and
+    a step took 3.93&nbsp;s. The kernel's 239 launches run back to back for the whole step and take 3.75&nbsp;s of
+    it, with the rest going to the short kernels that build each block's
+    offsets and apply the draws. The SMs have warps to run 99% of the time, and the host waits a total of 3&nbsp;ms per
+    step for blocks to arrive, so the copies keep up with the GPU. About 25&nbsp;GB of neighbour lists and degrees cross
+    PCIe each step, with PCIe receive throughput at 63% of the link's capacity, while DRAM read bandwidth stays at 36%,
+    close to the 39% at 71.6 million nodes. As at that size, the step is limited by the kernel's random reads of U,
+    which now holds 4&nbsp;GB of urns against the 1.5&nbsp;MB L2 cache.
+  </p>
+  <!-- SCREENSHOT S9 -->
+  <figure>
+    <img src="../images/polya-capstone/capstone-nsys-1b-step-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step on the 999.9 million node network, in which 239 draw_block kernels run back to back for 3.93 s while SMs Active holds at 99 percent, PCIe receive throughput at 63 percent and DRAM read bandwidth at 36 percent">
+    <figcaption>
+      One P&oacute;lya step on the 999.9 million node network without finite memory, with its neighbour lists split
+      between pinned RAM, pageable RAM and the NVMe drive. The kernel (<code>draw_block</code>) runs once for each of
+      the 239 blocks, and the launches fill the 3.93&nbsp;s step. SMs Active stays at 99%, PCIe RX Throughput at 63% and DRAM Read Bandwidth
+      at 36%. The Memory row is empty because the GPU makes no copies: CPU threads fill the pinned buffers and the
+      kernel reads them in place.
     </figcaption>
   </figure>
  <!--

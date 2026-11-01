@@ -1,9 +1,12 @@
 html { color-scheme: dark; }
+/* Side margins shrink as you zoom in: 15vw is a fixed share of the window, while the 120px taken off it grows with zoom. They never go below 15px, which is also what phones get. */
 body {
   max-width: 2000px;
   margin: 40px auto;
-  padding: 0 15px;
+  padding: 0 max(15px, 15vw - 120px);
   font-family: Verdana, Geneva, Tahoma, sans-serif;
+  /* 13px at the browser's default 16px. Headings, captions and .small text are sized relative to this, so they shrink with it. */
+  font-size: 0.8125rem;
   line-height: 1.5;
   color: #d4d4d4;
   background: #1e1e1e;
@@ -30,17 +33,31 @@ hr { border: 0; border-top: 1px solid #3c3c3c; }
 .project p { margin: 4px 0 8px; }
 
 /* Project write-up pages */
-figure { margin: 25px 0; }
+/* A figure shrinks to the width of its image and is centred in the column. Figures holding a .row span the whole column. */
+figure { width: fit-content; margin: 25px auto; }
+figure:has(> .row) { width: auto; }
 /* Images fill the column but are never enlarged past their own size, so charts narrower than the column stay sharp. */
 figure img, figure video {
   display: block;
+  box-sizing: border-box;
   width: auto;
   max-width: 100%;
   height: auto;
   border: 1px solid #3c3c3c;
   border-radius: 6px;
 }
-figcaption { color: #9d9d9d; font-size: 0.9em; margin-top: 6px; }
+/* contain: inline-size stops a long caption from widening its figure, so the caption wraps at the image's edges. */
+figcaption { color: #9d9d9d; font-size: 0.9em; margin-top: 6px; contain: inline-size; }
+/* .row puts images (or an image and a table) side by side across the column, centred vertically. Each image's --w is its
+   narrowest width in px. Images share the column in proportion to --w, so screenshots taken at the same scale keep the same
+   text size. When the --w widths no longer fit, as when zooming in, the images stack and each fills the column. */
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
+.row > div { flex: none; max-width: 100%; }
+.row > img, .row > .stack { flex: var(--w) 1 calc(var(--w) * 1px); min-width: 0; }
+/* A .stack inside a .row is a column as tall as the row: its image sits at the bottom and the table is centred in the space above it. */
+.stack { align-self: stretch; display: flex; flex-direction: column; }
+.stack > div { margin: auto; max-width: 100%; }
+.stack > img { width: 100%; }
 table { border-collapse: collapse; margin: 15px 0; font-variant-numeric: tabular-nums; }
 th, td { border: 1px solid #3c3c3c; padding: 5px 10px; text-align: left; }
 th { background: #252526; }

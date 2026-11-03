@@ -655,21 +655,21 @@
     the kernel, and the kernel reads each buffer in place.
     A buffer is refilled only after the kernel reading it has finished. Because the CPU does the copying instead of the
     GPU, the copies run at the same time as the kernels, which did not happen with the two-stream version above. The
-    drive reads at 1.6&nbsp;GB/s, so its 4.7&nbsp;GB take about 2.9&nbsp;s of each step, less than the 3.75&nbsp;s the
+    drive reads at 1.6&nbsp;GB/s, so its 4.7&nbsp;GB take about 2.9&nbsp;s of each step, less than the 4.1&nbsp;s the
     kernels take.
   </p>
   <p>
     The simulator's growth step cannot build a network this large either, so I also wrote an out-of-core version of
     it that writes the graph to the drive instead of keeping it in GPU memory. It makes the same random choices as the
     growth step, and produces the same graph for the same seed, which I checked at 1.1 and 17.9 million nodes. It
-    generated the 999.9 million node network in 71&nbsp;s, and the step engine loaded it in 25&nbsp;s.
+    generated the 999.9 million node network in 71&nbsp;s, and the step engine loaded it in 30&nbsp;s.
   </p>
   <p>
     With this, I ran the simulation on the 999.9 million node network for 864 steps with a memory of M&nbsp;=&nbsp;72
     steps, the settings we used in our experiments, and no interventions, which the out-of-core version does not yet
-    support. The 864 steps took 61 minutes, a median of 4.22&nbsp;s per step. The first 72 steps took 4.01&nbsp;s each,
-    and reading back the draws from 72 steps earlier added about 0.2&nbsp;s per step from then on. The whole run,
-    including loading the network and recording the distribution of red fractions after every step, took 65 minutes.
+    support. The 864 steps took 60 minutes, a median of 4.18&nbsp;s per step. The first 72 steps took 4.16&nbsp;s each,
+    and the steps after them, which also read back the draws from 72 steps earlier, took 4.18&nbsp;s. The whole run,
+    including loading the network and recording the distribution of red fractions after every step, took 67 minutes.
     A step takes about 15 times as long as at 71.6 million nodes, for 14 times as many nodes, and less than a third of
     the 13.4&nbsp;s the original code took for one step at 71.6 million nodes.
   </p>
@@ -693,25 +693,35 @@
   </figure>
   -->
   <p>
-    The Nsight Systems trace below shows one step on the same network without finite memory, from an earlier benchmark
-    in which more RAM was free: 6.2&nbsp;GB of the graph was kept in RAM and 3.8&nbsp;GB was read from the drive, and
-    a step took 3.93&nbsp;s. The kernel's 239 launches run back to back for the whole step and take 3.75&nbsp;s of
-    it, with the rest going to the short kernels that build each block's
-    offsets and apply the draws. The SMs have warps to run 99% of the time, and the host waits a total of 3&nbsp;ms per
-    step for blocks to arrive, so the copies keep up with the GPU. About 25&nbsp;GB of neighbour lists and degrees cross
-    PCIe each step, with PCIe receive throughput at 63% of the link's capacity, while DRAM read bandwidth stays at 36%,
-    close to the 39% at 71.6 million nodes. As at that size, the step is limited by the kernel's random reads of U,
-    which now holds 4&nbsp;GB of urns against the 1.5&nbsp;MB L2 cache.
+    The Nsight Systems trace below shows one of these steps, step 102 of a separate run with the same settings,
+    recorded with the GPU metrics. Under the profiler the step takes 4.19&nbsp;s. The kernel's 239 launches run back
+    to back and take 3.96&nbsp;s of it, the short kernels that build each block's offsets take 0.16&nbsp;s, and
+    applying the draws takes 0.05&nbsp;s, along with copying the row of draws from 72 steps earlier to the GPU and the
+    new row back, 125&nbsp;MB each way in 9.5&nbsp;ms each. The GPU is idle for only about 20&nbsp;ms per step, the SMs
+    have warps to run 96% of the time, and the host waits a total of 2&nbsp;ms per step for blocks to arrive, so the
+    copies keep up with the GPU. About 25&nbsp;GB of neighbour lists and degrees cross PCIe each step, with PCIe receive
+    throughput at 59% of the link's capacity, while DRAM read bandwidth stays at 34%, close to the 39% at 71.6 million
+    nodes. As at that size, the step is limited by the kernel's random reads of U, which now holds 4&nbsp;GB of urns
+    against the 1.5&nbsp;MB L2 cache.
+  </p>
+  <p>
+    The first trace of these steps showed the GPU idle for 0.25&nbsp;s or more at the end of every step after step 72.
+    On Windows, the CUDA driver collects launched work and passes it to the GPU only at the next CUDA call. After
+    launching the last blocks, the host read the old row of draws from the file before making another CUDA call, so
+    the last blocks waited until the read had finished. Reading the row on a separate thread while the blocks run, and
+    forcing the queued work to be submitted after the last launch, removed the gap, and the steps after step 72 now
+    take as long as those before it.
   </p>
   <!-- SCREENSHOT S9 -->
   <figure>
-    <img src="../images/polya-capstone/capstone-nsys-1b-step-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step on the 999.9 million node network, in which 239 draw_block kernels run back to back for 3.93 s while SMs Active holds at 99 percent, PCIe receive throughput at 63 percent and DRAM read bandwidth at 36 percent">
+    <img src="../images/polya-capstone/capstone-nsys-1b-step-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step on the 999.9 million node network with finite memory, in which 239 draw_block kernels run back to back for 4.19 s while SMs Active holds near 96 percent, PCIe receive throughput at 59 percent and DRAM read bandwidth at 34 percent">
     <figcaption>
-      One P&oacute;lya step on the 999.9 million node network without finite memory, with its neighbour lists split
-      between pinned RAM, pageable RAM and the NVMe drive. The kernel (<code>draw_block</code>) runs once for each of
-      the 239 blocks, and the launches fill the 3.93&nbsp;s step. SMs Active stays at 99%, PCIe RX Throughput at 63% and DRAM Read Bandwidth
-      at 36%. The Memory row is empty because the GPU makes no copies: CPU threads fill the pinned buffers and the
-      kernel reads them in place.
+      One P&oacute;lya step on the 999.9 million node network with finite memory (M&nbsp;=&nbsp;72), with its neighbour
+      lists split between pinned RAM, pageable RAM and the NVMe drive. The kernel (<code>draw_block</code>) runs once
+      for each of the 239 blocks, and the launches fill the 4.19&nbsp;s step. At the end of the step, the Memory row
+      shows the 125&nbsp;MB row of draws from 72 steps earlier going to the GPU and the new row coming back. SMs Active
+      stays near 96%, PCIe RX Throughput at 59% and DRAM Read Bandwidth at 34%. The neighbour lists themselves are
+      never copied by the GPU: CPU threads fill the pinned buffers and the kernel reads them in place.
     </figcaption>
   </figure>
  <!--

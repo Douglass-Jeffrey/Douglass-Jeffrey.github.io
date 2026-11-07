@@ -234,18 +234,6 @@
     network, building the CSR matrix, and running 100 P&oacute;lya steps. Benchmarks were run on available consumer hardware and
     modern data center chips.
   </p>
-  <!-- djeffrey dont need this
-  <figure>
-    <img src="../images/polya-capstone/capstone-small-benchmark.png" width="1000" height="600" alt="Log-scale plot of total time against number of nodes from 128 to 32,768, in which the original implementation climbs to about 500 seconds, the vectorized GPU version to about 6 seconds and the vectorized CPU version to under a second">
-    <figcaption>
-      Time to grow a Barab&aacute;si&ndash;Albert graph and run 100 P&oacute;lya steps (log-log). Green is the initial
-      implementation. Blue and orange are the final implementation on the CPU (about 740&times; faster at 32,768 nodes) and
-      GPU respectively. The GPU trails here due to the small batch sizes used in the benchmark.
-    </figcaption>
-  </figure>
-  -->
-  <p>
-  </p>
   <figure>
     <div class="row">
       <img src="../images/polya-capstone/capstone-compute-time.png" width="1400" height="716" style="--w: 1050" alt="Log-scale plot of compute time against number of nodes for the Ryzen 3 CPU, GTX 1660 Ti and A100, with the 1660 Ti jumping up to meet the CPU at the largest sizes">
@@ -308,7 +296,7 @@
       the steps.
     </figcaption>
   </figure>
-    <!-- is this really interesting or necessary?
+  <!-- is this really interesting or necessary?
   <p>
     The float64 temporaries are only part of what this trace shows. The simulation has already allocated 19.4&nbsp;GB
     before the first P&oacute;lya step, almost four times the 5.0&nbsp;GB of VRAM available to CUDA, and most of it
@@ -390,7 +378,7 @@
 
   <h2>Performance Optimization</h2>
   <p>
-    With the source of the performance degradation identified, the next step was to come up solutions to relieve the 
+    With the source of the performance degradation identified, the next step was to come up with solutions to relieve the
     bottleneck. The first makes the step use far less GPU memory, so that everything it reads stays in VRAM. The second
     makes the random reads cheaper, by numbering the nodes so that neighbours sit close together in memory.
     The third handles graphs too large for VRAM even after the first change, by leaving only data that is read
@@ -623,220 +611,75 @@
     </figcaption>
   </figure>
 
-  <h3>One billion nodes</h3>
+  <h3>Scaling to one billion nodes</h3>
   <p>
-    Reading the column indices directly from pinned memory works only while they fit in it, and Windows lets a program
-    pin at most about 15&nbsp;GB of this machine's 32&nbsp;GB of RAM. A Barab&aacute;si&ndash;Albert network of 999.9
-    million nodes has 3.0 billion edges, so its neighbour lists hold 6.0 billion entries, 24&nbsp;GB as 32-bit
-    integers. That is more than can be pinned, and about all of the RAM the operating system leaves free, so part of
-    the graph has to stay on the NVMe drive and be read again on every step. The GPU cannot read pageable (ordinary)
-    RAM or the drive directly, so these parts have to be streamed: copied into pinned memory before the kernel that
-    needs them runs.
+    With the techniques above I decided to tackle the challenge of simulating a 1B node P&oacute;lya process locally.
+    The largest network so far, at 143.2 million nodes, still fit with U in VRAM and the column indices in pinned RAM.
+    A network of a billion nodes is about seven times larger, too large for either, so each part of the step's data
+    had to be made smaller or streamed from RAM and the drive.
   </p>
   <p>
-    The rest of the step also has to shrink to fit on the card. Stored as before, U would take 8&nbsp;GB, the step's
-    random numbers another 8&nbsp;GB and the row pointers 8&nbsp;GB, so I wrote a separate, out-of-core version of the
-    step for graphs this large. It keeps only U in VRAM, as 16-bit counts that take 4&nbsp;GB. Sixteen bits hold up to
-    65,535 balls of each colour, and the step flags any count that would pass that limit instead of letting it wrap
-    around. The random numbers are computed inside the kernel from the seed, the step and the node's index, using a
-    counter-based generator (Philox), and each draw is stored as a single bit. Finite memory needs each node's last 72
-    draws, which are kept as bits in a 9&nbsp;GB file on the drive. Each step reads the row of draws from 72 steps
-    earlier, so that those balls can be taken back out, and writes the new row, 125&nbsp;MB each way. The graph is
-    processed in blocks of rows of about 96&nbsp;MB, with one kernel launch per block. The row pointers are stored as each node's degree in one
-    byte, with a short list for the nodes with 255 or more neighbours, and are turned into 32-bit offsets on the GPU
-    just before each block's kernel runs. Given the same random numbers, this version produces the same urns as the
-    simulator after every step, which I checked at 17.9 and 71.6 million nodes.
+    Reading the column indices directly from pinned memory only works while they fit in it, and Windows lets a program
+    pin at most about 15&nbsp;GB of this machine's 32&nbsp;GB of RAM. At a billion nodes the neighbour lists hold 6.0
+    billion entries, 24&nbsp;GB as 32-bit integers. The rest has to be kept in ordinary (pageable) RAM or on the NVMe
+    drive, which the GPU cannot read directly, so it is copied into pinned memory before the kernel needs it.
   </p>
   <p>
-    At 999.9 million nodes the neighbour lists form 239 blocks. In the run below, 139 of them (13.9&nbsp;GB) stay in
-    pinned memory and are read in place, as at 143.2 million nodes. Another 53 blocks (5.3&nbsp;GB) are kept in
-    pageable RAM, and the remaining 47 (4.7&nbsp;GB) are read from the drive on every step. Four CPU threads copy
-    these blocks, from RAM or straight from the drive, into a ring of six pinned buffers, up to four blocks ahead of
-    the kernel, and the kernel reads each buffer in place.
-    A buffer is refilled only after the kernel reading it has finished. Because the CPU does the copying instead of the
-    GPU, the copies run at the same time as the kernels, which did not happen with the two-stream version above. The
-    drive reads at 1.6&nbsp;GB/s, so its 4.7&nbsp;GB take about 2.9&nbsp;s of each step, less than the 4.1&nbsp;s the
-    kernels take.
+    The step's other data does not fit on the card either. Stored as before, U, the step's random numbers and the
+    row pointers would each take 8&nbsp;GB, more than the card's 6&nbsp;GB of VRAM. Therefore I wrote an out-of-core
+    version of the step that keeps only U in VRAM and shrinks everything else.
+  </p>
+  <ul>
+    <li>U is stored as 16-bit counts, which take 4&nbsp;GB.</li>
+    <li>The random numbers are computed inside the kernel from the seed, the step and the node's index, and each draw
+      is kept as a single bit.</li>
+    <li>The row pointers are stored as one-byte degrees, with a short list for the nodes with 255 or more neighbours,
+      and turned into offsets on the GPU.</li>
+    <li>Finite memory keeps each node's last 72 draws as bits, in a 9&nbsp;GB file on the drive.</li>
+  </ul>
+  <p>
+    Given the same random numbers, it produces exactly the same urns as the simulator, which I checked at 17.9 and
+    71.6 million nodes. I also wrote an out-of-core growth step, which generated the network in 71&nbsp;s.
   </p>
   <p>
-    The simulator's growth step cannot build a network this large either, so I also wrote an out-of-core version of
-    it that writes the graph to the drive instead of keeping it in GPU memory. It makes the same random choices as the
-    growth step, and produces the same graph for the same seed, which I checked at 1.1 and 17.9 million nodes. It
-    generated the 999.9 million node network in 71&nbsp;s, and the step engine loaded it in 30&nbsp;s.
+    The graph is processed in 239 blocks of about 96&nbsp;MB. Of these, 139 (13.9&nbsp;GB) stay in pinned memory and
+    are read in place, 53 (5.3&nbsp;GB) are kept in ordinary RAM, and the remaining 47 (4.7&nbsp;GB) are read from the
+    drive on every step. Four CPU threads copy these blocks into six pinned buffers ahead of the kernel. Because the CPU
+    does the copying, the copies run at the same time as the kernels, unlike in the two-stream version above.
   </p>
   <p>
-    With this, I ran the simulation on the 999.9 million node network for 864 steps with a memory of M&nbsp;=&nbsp;72
-    steps, the settings we used in our experiments, and no interventions, which the out-of-core version does not yet
-    support. The 864 steps took 60 minutes, a median of 4.18&nbsp;s per step. The first 72 steps took 4.16&nbsp;s each,
-    and the steps after them, which also read back the draws from 72 steps earlier, took 4.18&nbsp;s. The whole run,
-    including loading the network and recording the distribution of red fractions after every step, took 67 minutes.
-    A step takes about 15 times as long as at 71.6 million nodes, for 14 times as many nodes, and less than a third of
-    the 13.4&nbsp;s the original code took for one step at 71.6 million nodes.
+    I ran the simulation for 864 steps with a memory of M&nbsp;=&nbsp;72, the settings we used in our experiments, and
+    no interventions, which this version does not yet support. The steps took 60 minutes, a median of
+    4.18&nbsp;s per step, less than a third of the 13.4&nbsp;s the original code took for one step on a network 14 times
+    smaller. By about step 200 the red fractions settle around one half, with 85% of nodes between 40% and 60% red, so
+    without an intervention neither colour takes over.
   </p>
   <p>
-    The figure below shows the distribution of red fractions over the run. Before step 72 the urns are still growing,
-    so the fractions they can take change every step. After that the distribution narrows, and by about step 200 it
-    stops changing. It stays centred on one half, with 85% of nodes between 40% and 60% red, and at the end only 4,422
-    of the 999.9 million nodes are 80% red or more, with as many at 20% or less. Without an intervention neither colour
-    takes over: each urn holds only its last 72 draws, and each draw depends on the balls across the node's whole
-    neighbourhood, so no imbalance builds up.
-  </p>
-  <!-- Heatmap removed for now.
-  <figure>
-    <img src="../images/polya-capstone/capstone-heatmap-1b.png" width="1400" height="809" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps on the 999.9 million node network, in which the distribution narrows around one half by about step 200 and then stays the same">
-    <figcaption>
-      The distribution of per-node red fractions at each step of the 864-step run on the 999.9 million node network,
-      with finite memory (M&nbsp;=&nbsp;72) and no intervention. After warm-up every urn holds 74 balls, so the
-      fractions sit on the grid k/74, and the horizontal stripes come from bins of width 0.02 holding either one or two
-      of these values.
-    </figcaption>
-  </figure>
-  -->
-  <p>
-    The Nsight Systems trace below shows one of these steps, step 102 of a separate run with the same settings,
-    recorded with the GPU metrics. Under the profiler the step takes 4.19&nbsp;s. The kernel's 239 launches run back
-    to back and take 3.96&nbsp;s of it, the short kernels that build each block's offsets take 0.16&nbsp;s, and
-    applying the draws takes 0.05&nbsp;s, along with copying the row of draws from 72 steps earlier to the GPU and the
-    new row back, 125&nbsp;MB each way in 9.5&nbsp;ms each. The GPU is idle for only about 20&nbsp;ms per step, the SMs
-    have warps to run 96% of the time, and the host waits a total of 2&nbsp;ms per step for blocks to arrive, so the
-    copies keep up with the GPU. About 25&nbsp;GB of neighbour lists and degrees cross PCIe each step, with PCIe receive
-    throughput at 59% of the link's capacity, while DRAM read bandwidth stays at 34%, close to the 39% at 71.6 million
-    nodes. As at that size, the step is limited by the kernel's random reads of U, which now holds 4&nbsp;GB of urns
-    against the 1.5&nbsp;MB L2 cache.
+    The Nsight trace below shows one of these steps. The kernel's 239 launches run back to back and take 3.96&nbsp;s
+    of the 4.18&nbsp;s step, and the host waits only 2&nbsp;ms per step for blocks to arrive, so the copies keep up
+    with the GPU. PCIe receive throughput stays at 59% of the link's capacity and DRAM read bandwidth
+    at 34%. As at 71.6 million nodes, the step is limited by the kernel's random reads of U, now 4&nbsp;GB of urns
+    against a 1.5&nbsp;MB L2 cache.
   </p>
   <p>
-    The first trace of these steps showed the GPU idle for 0.25&nbsp;s or more at the end of every step after step 72.
-    On Windows, the CUDA driver collects launched work and passes it to the GPU only at the next CUDA call. After
-    launching the last blocks, the host read the old row of draws from the file before making another CUDA call, so
-    the last blocks waited until the read had finished. Reading the row on a separate thread while the blocks run, and
-    forcing the queued work to be submitted after the last launch, removed the gap, and the steps after step 72 now
-    take as long as those before it.
+    An earlier trace showed the GPU idle for 0.25&nbsp;s at the end of every step after step 72. On Windows, the CUDA
+    driver passes launched work to the GPU only at the next CUDA call, and the host was reading the old row of draws
+    from the file before making one. Reading the row on a separate thread and submitting the work right after the last
+    launch removed the gap.
   </p>
   <!-- SCREENSHOT S9 -->
   <figure>
-    <img src="../images/polya-capstone/capstone-nsys-1b-step-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step on the 999.9 million node network with finite memory, in which 239 draw_block kernels run back to back for 4.19 s while SMs Active holds near 96 percent, PCIe receive throughput at 59 percent and DRAM read bandwidth at 34 percent">
+    <img src="../images/polya-capstone/capstone-nsys-1b-step-zoom.png" alt="Nsight Systems timeline of one P&oacute;lya step on the billion-node network, in which 239 draw_block kernels run back to back for 4.18 s while PCIe receive throughput holds near 59 percent and DRAM read bandwidth near 34 percent">
     <figcaption>
-      One P&oacute;lya step on the 999.9 million node network with finite memory (M&nbsp;=&nbsp;72), with its neighbour
-      lists split between pinned RAM, pageable RAM and the NVMe drive. The kernel (<code>draw_block</code>) runs once
-      for each of the 239 blocks, and the launches fill the 4.19&nbsp;s step. At the end of the step, the Memory row
-      shows the 125&nbsp;MB row of draws from 72 steps earlier going to the GPU and the new row coming back. SMs Active
-      stays near 96%, PCIe RX Throughput at 59% and DRAM Read Bandwidth at 34%. The neighbour lists themselves are
-      never copied by the GPU: CPU threads fill the pinned buffers and the kernel reads them in place.
+      One P&oacute;lya step on the billion-node network with finite memory (M&nbsp;=&nbsp;72). The kernel
+      (<code>draw_block</code>) runs once for each of the 239 blocks, and the launches fill the 4.18&nbsp;s step. At the
+      right end, the memcpy rows show the 125&nbsp;MB row of draws from 72 steps earlier going to the GPU and the new
+      row coming back.
     </figcaption>
   </figure>
- <!--
-  <h3>Results</h3>
-  <p>
-    The benchmark from the start of the Performance Optimization section, re-run with the fused kernel:
-  </p>
-  <div style="overflow-x: auto">
-  <table>
-    <tr><th>Nodes</th><th>Edges</th><th>Ryzen 3 3100</th><th>GTX 1660 Ti, original</th><th>GTX 1660 Ti, fused kernel</th><th>A100, original</th></tr>
-    <tr><td>2.2 M</td><td>6.7 M</td><td>38.2 s</td><td>3.7 s</td><td>2.2 s</td><td>1.7 s</td></tr>
-    <tr><td>17.9 M</td><td>53.7 M</td><td>348 s</td><td>25.3 s</td><td>14.2 s</td><td>9.3 s</td></tr>
-    <tr><td>71.6 M</td><td>215 M</td><td>1,565 s</td><td>1,557 s</td><td>90.7 s</td><td>37.9 s</td></tr>
-  </table>
-  </div>
-  <p>
-    The 1660 Ti now finishes the largest run in 90.7&nbsp;s instead of 1,557&nbsp;s, 17 times faster than the CPU. The
-    100 P&oacute;lya steps take 29.6&nbsp;s of that, and growing the network and building the CSR matrix take the other
-    61&nbsp;s, so the steps are no longer the bottleneck: growth is now the slowest part of the pipeline.
-  </p>
-
-  <h2>Analysis</h2>
-  <p>
-    With the simulator in place, we swept intervention strength, number of targets, timing, targeting rule and network
-    density. Rather than walk through every run, this section describes the patterns that held across them, the
-    mathematics behind each, and one representative comparison.
-  </p>
-  <figure>
-    <img src="../images/polya-capstone/capstone-heatmap.png" width="1400" height="808" alt="Heatmap of per-urn red ball proportion over 864 Polya process steps, with most nodes moving to over 90% red by about step 400">
-    <figcaption>
-      The distribution of per-node red fractions at each step in one run on a 65,600-node network, with red balls
-      injected at step 144. Before step 72 the urns are still growing, so the fractions they can take shift every step,
-      producing the stripes. The thin line at 0.5 is a binning artifact, which arises because after warm-up the fractions
-      sit on the grid k/74 and the bin starting at 0.5 is the only one of the 72 that holds two grid values. After the injection, most nodes pass 90% red by
-      around step 400.
-    </figcaption>
-  </figure>
-  <h3>Density cuts both ways</h3>
-  <p>
-    With switch-network interventions, the m = 3 and m = 5 networks reached full consensus and the m = 1 network about
-    90%, while direct injection barely moved the m = 1 network at all. After warm-up, a node with d neighbours draws from
-    a super urn of 74(d&nbsp;+&nbsp;1) balls. In a sparse network super urns are small, so a few injected red balls
-    dominate a target's neighbourhood, but paths between nodes are long and few, so that local bias spreads slowly. In a
-    dense network the paths are short, but the super urns are large. The smallest hold 148 balls at m = 1 and 444 at
-    m = 5, and those of hubs run to tens of thousands, so the same 296 red balls that dominate a sparse neighbourhood barely
-    register at a hub. Denser networks spread infection faster but need larger interventions to start it.
-  </p>
-
-  <h3>Timing and diminishing returns</h3>
-  <p>
-    Every parameter showed diminishing returns, with switch-network gains flattening past about 1,250 red balls per node,
-    seven nodes per intervention or a 10% intervention probability, and injection gains flattening past about 300 red
-    balls per target.
-    Timing mattered more than volume. With a constant intervention probability, interventions kept arriving after
-    infection had already taken off, so we switched to a decaying probability p(t)&nbsp;=&nbsp;e<sup>&minus;t/&tau;</sup>,
-    which concentrated interventions at the start and made them more cost-efficient.
-  </p>
-  <p>
-    Memory explains both effects. A steady-state urn is a moving average of its last 72 draws, so a node stays infected
-    only while its neighbourhood keeps drawing red, and past reinforcement cannot be banked. Within that window the urn's
-    sensitivity to early draws still applies, so infection that spreads early becomes self-sustaining and resources spent
-    after that point buy little.
-  </p>
-
-  <h3>Degree versus eigenvector centrality</h3>
-  <p>
-    Targeting by degree beat targeting by eigenvector centrality at every density. With 74 red balls per target on the
-    m = 3 network, eigenvector targeting left about five times as many nodes near an even split (510,784, against 101,312
-    for degree). A high-degree node's urn appears in the most super urns, many of them belonging to other hubs, since the
-    hubs of a Barab&aacute;si&ndash;Albert graph form a densely connected core. Eigenvector centrality rewards connections
-    to important nodes rather than many connections, so its targets reach fewer super urns directly and their influence has
-    to pass through intermediate hubs first.
-  </p>
-
-  <h3>Switch-network nodes versus injection</h3>
-  <p>
-    The two strategies touch different super urns. Injecting into node j raises R<sub>j</sub>, which sits in the super
-    urns of j and its neighbours, but changes no neighbourhood. An intervention node adds a term to the super urn of every
-    target, so one node wired to a thousand hubs biases all of them at once, and the bias spreads through the hub core and
-    outward. With an unlimited budget, injection is faster, because it biases its targets and their neighbours
-    immediately. Under a fixed budget the outcome depends on the cost model, because injection is charged for every
-    target while an intervention node costs the same whether it connects to ten nodes or a thousand.
-  </p>
-  <p>
-    One of the fixed-budget comparisons we ran shows the difference. On a 10.5-million-node network, with the
-    switch-network intervention given a budget 25% smaller than direct injection, the nodes were distributed by red
-    fraction at step 862 as follows:
-  </p>
-  <table>
-    <tr><th>Red fraction</th><th>Switch network</th><th>Direct injection</th></tr>
-    <tr><td>0.5&ndash;0.6</td><td>0</td><td>914</td></tr>
-    <tr><td>0.6&ndash;0.7</td><td>600</td><td>59,885</td></tr>
-    <tr><td>0.7&ndash;0.8</td><td>79,961</td><td>1,257,616</td></tr>
-    <tr><td>0.8&ndash;0.9</td><td>2,603,529</td><td>5,357,550</td></tr>
-    <tr><td>0.9&ndash;1.0</td><td>7,869,319</td><td>3,877,443</td></tr>
-    <tr><th>Infected (&ge; 0.8)</th><th>99.2%</th><th>87.5%</th></tr>
-  </table>
-  <p>
-    The switch-network run infected 99.2% of nodes, with three quarters above 90% red. The injection run passed the 80%
-    consensus threshold at 87.5%, but left more than 1.3 million nodes below the infection threshold.
-  </p>
-  -->
-  <h2>What I'd do next</h2>
-  <ul>
-    <li>Bring network growth and the CSR build up to the speed of the P&oacute;lya step. Growth still allocates about
-      19&nbsp;GB at 71.6 million nodes, much of it CuPy's cache of buffers it has outgrown, and growth and the build now
-      take twice as long as 100 steps.</li>
-    <li>Make node renumbering cheap enough to use, for example by running the breadth-first search on the GPU or by
-      placing nodes in a local order as the network grows.</li>
-    <li>Let the network keep growing during the simulation, with growth rules beyond Bernoulli trials.</li>
-    <li>Explore adding more colours to the process, and different intervention strategies.</li>
-  </ul>
 
   <h2>Tools</h2>
-  <p>Python, NumPy, SciPy (sparse matrices), CuPy and CUDA, Google Colab, Matplotlib, Gephi.</p>
+  <p>Python, NumPy, SciPy, CuPy and CUDA, Google Colab, Matplotlib, Gephi.</p>
 
   <hr>
   <p class="small"><a href="../index.html">&lt;- Home</a></p>

@@ -23,9 +23,9 @@
   <p>
     This is a 5-stage, in-order RISC-V (RV32I) processor that I wrote in Verilog and run on the Cyclone II FPGA of an
     Altera DE1 board. It started as a textbook five-stage pipeline and grew, one verified step at a time, into a
-    processor with full forwarding, a two-bit branch predictor, and an 8&nbsp;KB instruction cache and 16&nbsp;KB data
-    cache in front of the board's 512&nbsp;KB of off-chip SRAM. It runs at 50&nbsp;MHz and uses every one of the FPGA's
-    52 block RAMs.
+    processor with full forwarding, a choice of five branch predictors, and an 8&nbsp;KB instruction cache and
+    16&nbsp;KB data cache in front of the board's 512&nbsp;KB of off-chip SRAM. It runs at 50&nbsp;MHz and uses every
+    one of the FPGA's 52 block RAMs.
   </p>
   <p>
     Most of the work went into making sure the design was right rather than adding features. A pipeline can compute the
@@ -37,6 +37,7 @@
     <tr><td>ISA</td><td>RV32I (no CSRs, traps or interrupts)</td></tr>
     <tr><td>Pipeline</td><td>IF, ID, EX, MEM, WB, in order</td></tr>
     <tr><td>Clock</td><td>50 MHz, Fmax about 52&ndash;54 MHz</td></tr>
+    <tr><td>Branch prediction</td><td>Bimodal by default; correlating, gshare, local or tournament chosen at build time</td></tr>
     <tr><td>Caches</td><td>8 KB icache + 16 KB dcache, direct mapped, 16-byte lines, write-back dcache</td></tr>
     <tr><td>Main memory</td><td>512 KB asynchronous SRAM on the board</td></tr>
     <tr><td>FPGA use</td><td>~6,300 of 18,752 logic elements, all 52 M4K block RAMs</td></tr>
@@ -90,11 +91,12 @@
 
   <h3>Branch prediction</h3>
   <p>
-    Branches are predicted in ID by a table of 32 two-bit saturating counters indexed by the PC, and resolved in EX by a
-    dedicated comparator, kept outside the ALU so the compare doesn't wait on the shifter and result mux. JAL is always
-    taken in ID and JALR is resolved in EX. A correctly predicted taken branch costs nothing and a misprediction costs
-    one cycle. On an insertion sort benchmark the predictor cut flushes from 4,519 to 1,568 and the run from 30,841 to
-    27,892 cycles.
+    By default, branches are predicted in ID by a table of 32 two-bit saturating counters indexed by the PC, and
+    resolved in EX by a dedicated comparator, kept outside the ALU so the compare doesn't wait on the shifter and result
+    mux. JAL is always taken in ID and JALR is resolved in EX. A correctly predicted taken branch costs nothing and a
+    misprediction costs one cycle. On an insertion sort benchmark the predictor cut flushes from 4,519 to 1,568 and the
+    run from 30,841 to 27,892 cycles. Four other predictors can be built in its place, and the
+    <a href="#bp-study">branch predictor study</a> below compares all five.
   </p>
   <p>
     I chose to predict in ID rather than IF. Predicting in IF would put the predictor's lookup on the same path as the
@@ -104,79 +106,49 @@
 
   <h2>Memory system</h2>
   <p>
-    The FPGA's 52 block RAMs (M4Ks) hold about 26&nbsp;KB in total, and originally the instruction and data memories
-    lived entirely in them. To make room for larger programs and data I moved main memory to the board's 512&nbsp;KB
-    SRAM chip and turned the block RAMs into caches. The SRAM is split in half: the low 256&nbsp;KB holds code and the high 256&nbsp;KB holds data, so the
-    two sides keep separate address spaces, as the original memories did. Both caches are direct mapped with 16-byte
-    lines, which splits an 18-bit address as follows:
+    The FPGA's 52 block RAMs (M4Ks) hold only about 26&nbsp;KB, so main memory lives in the board's 512&nbsp;KB SRAM
+    chip and the block RAMs serve as caches in front of it. The low 256&nbsp;KB of the SRAM holds code and the high
+    256&nbsp;KB holds data. Both caches are direct mapped with 16-byte lines, which splits an 18-bit address as follows:
   </p>
   <table>
     <tr><th>Cache</th><th>Lines</th><th>Tag</th><th>Index</th><th>Offset (word, byte)</th></tr>
     <tr><td>icache, 8 KB</td><td>512</td><td>bits 17&ndash;13</td><td>bits 12&ndash;4</td><td>bits 3&ndash;0</td></tr>
     <tr><td>dcache, 16 KB</td><td>1,024</td><td>bits 17&ndash;14</td><td>bits 13&ndash;4</td><td>bits 3&ndash;0</td></tr>
   </table>
-  <p>
-    Because the index and offset are simply the low address bits, each cache's data array is laid out like a small
-    ordinary memory, and only the tag array decides whether what it returns belongs to the address being accessed.
-  </p>
   <!-- FIGURE (to draw): dcache organization. Tag and valid RAM, dirty RAM, the four byte lanes with their
        pipeline port (A) and controller port (B), the hit compare, and the line buffer between port B and the SRAM. -->
 
   <h3>Data cache</h3>
   <p>
-    The data cache is write-back and allocates on a store miss, so a store that misses fetches its line first and then
-    writes it. Its tags and valid bits share one RAM, its dirty bits have their own, and its data is split into four byte
-    lanes, each a separate RAM holding one byte of every word. A store enables only the lanes it writes, so byte and
-    halfword stores finish in a single cycle with no read-modify-write.
+    The data cache is write-back and allocates on a store miss. Its data is split into four byte lanes, each a separate
+    RAM holding one byte of every word, so a byte or halfword store enables only the lanes it writes and finishes in a
+    single cycle. A load reads the data RAM on its way from MEM to WB, so a hit costs nothing extra. A store writes on
+    the edge leaving MEM, so the cache has to know whether it hits before that edge: the tag RAM is addressed with the
+    ALU result while the access is still in EX, and the tag compare happens in MEM. A miss raises <code>busy</code>,
+    which freezes the pipeline.
   </p>
   <p>
-    The tricky part is timing. A load reads the data RAM on its way from MEM to WB, exactly as the original data memory
-    did, so a hit costs nothing extra. A store, however, writes on the edge leaving MEM, so the cache has to know
-    whether it hits before that edge. The tag RAM is therefore addressed with the ALU result while the access is still
-    in EX, a stage early, and the tag compare happens in MEM. A miss raises <code>busy</code>, which freezes the
-    pipeline before the store can write into the wrong line.
-  </p>
-  <p>
-    Each byte lane is a true dual-port RAM. One port belongs to the pipeline, for loads and stores, and is addressed
-    directly by the EX/MEM pipeline register. The other belongs to the cache controller, for refills and write-backs.
-    The two are never active at the same time, since the controller only works while the pipeline is frozen, but giving
-    the controller its own port keeps the pipeline's address path a plain wire, which mattered for timing.
-  </p>
-  <p>
-    On a miss the controller reads the victim line's dirty bit, copies a dirty victim out through its port and writes it
-    to SRAM, reads the new line from SRAM, writes it into the lanes one word per cycle, writes the new tag, and finally
-    forces a hit so that the frozen load or store completes. The tag is written last, so a half-written line is never
-    valid. A miss costs about 42 cycles, or about 85 when a dirty line has to be written back first.
-  </p>
-  <p>
-    The dirty bit is read after the miss is detected rather than early with the tag. A store hit just ahead in the
-    pipeline can be setting that same dirty bit on the same clock edge, and an early read would return the old value.
-    A dirty line would then look clean and be thrown away without being written back.
+    Each byte lane is a true dual-port RAM. One port belongs to the pipeline and is addressed directly by the EX/MEM
+    pipeline register, which keeps that address path a plain wire. The other belongs to the cache controller. On a
+    miss the controller writes back a dirty victim, reads the new line from SRAM, writes it into the lanes one word per
+    cycle and writes the tag last, so a half-written line is never valid. A miss costs 42 cycles, or 82 when a dirty
+    line has to be written back first.
   </p>
 
   <h3>Instruction cache</h3>
   <p>
-    The instruction cache is read only. Its tags and instructions are read together, on the edge that latches the next
-    fetch address, and the hit check happens in ID. A miss is handled like a load-use stall: the fetch is held and a
-    bubble goes into EX, while the instructions already in EX, MEM and WB keep going. The line is fetched from the
-    code half of the SRAM in about 45 cycles.
-  </p>
-  <p>
-    The cache powers up already holding the program from the FPGA's configuration image, with every line marked valid,
-    so a program of up to 8&nbsp;KB runs without anything having to load the SRAM first. The miss path is fully
-    exercised in simulation by starting with the cache empty and the program in the SRAM model.
+    The instruction cache is read only. Its tags and instructions are read together and checked in ID, and a miss
+    holds the fetch and sends a bubble into EX while the older instructions keep going. It powers up already holding the
+    program from the FPGA's configuration image, so a program of up to 8&nbsp;KB runs without anything having to load
+    the SRAM first.
   </p>
 
   <h3>SRAM controller and arbiter</h3>
   <p>
-    The SRAM chip has a 16-bit data bus, so the controller moves a 16-byte cache line as eight 16-bit transfers. Each
-    transfer has a full cycle of setup before the write strobe, a two-cycle strobe and a full cycle of hold after it,
-    and every SRAM pin is driven from a register in the FPGA's I/O cells to keep the skew between pins small. A line
-    takes about 35 cycles, 0.7&nbsp;&micro;s, or about 23&nbsp;MB/s. That is roughly an eighth of what the 10&nbsp;ns
-    chip can do, a margin I chose deliberately for bring-up and plan to cut back.
-  </p>
-  <p>
-    The two caches share the controller through an arbiter. When both miss at once the data cache goes first, since its
+    The SRAM chip has a 16-bit data bus, so the controller moves a 16-byte line as eight 16-bit beats. Each beat has a
+    full cycle of setup, a two-cycle strobe and a full cycle of hold, with every SRAM pin driven from a register in the
+    FPGA's I/O cells. A line takes about 35 cycles, a margin I chose for bring-up, and the board's memory test measures
+    21.7&nbsp;MB/s. The two caches share the controller through an arbiter that serves the data cache first, since its
     miss freezes the whole pipeline while an instruction miss only holds the front end.
   </p>
   <table>
@@ -186,160 +158,315 @@
     <tr><th>All</th><th></th><th></th><th></th><th>52 of 52</th></tr>
   </table>
 
-  <h2>Verification</h2>
+  <h2 id="bp-study">Branch predictor study</h2>
   <p>
-    Each test program runs on both the RTL and an independent RV32I reference model written in Python. The runner
-    compares the trace of retired instructions one by one, the final registers and every nonzero word of data memory,
-    read through any dirty cache lines, and for directed tests the exact number of stalls and flushes, so a pipeline that
-    stalls when it doesn't need to still fails.
-  </p>
-  <ul>
-    <li><b>Directed tests</b> cover forwarding, load-use stalls at each distance, control flow, branch prediction with
-      exact flush counts, and cache evictions.</li>
-    <li><b>Random programs</b> are biased toward short register dependencies and colliding loads and stores. Half of
-      their memory accesses use a base register that jumps between addresses 16&nbsp;KB apart, so they land on the same
-      cache line with different tags and force dirty evictions.</li>
-    <li><b>Every test runs in several modes:</b> with the clock enable always high, low every other cycle and random,
-      and with the instruction cache preloaded or empty. The results must not change between modes.</li>
-    <li><b>A model of the SRAM chip</b> checks its timing rules (setup and hold around the write strobe, access time
-      and bus contention) on every simulation.</li>
-    <li><b>Unit tests</b> include 50,000 random accesses to the data cache, about 47,000 of them misses and 23,700
-      dirty write-backs, checked against a byte-level reference memory.</li>
-  </ul>
-  <p>
-    To check that the tests can actually fail, I break the design on purpose. An early round of 14 deliberate bugs was
-    caught 13 times (the survivor turned out to be unreachable), and two deliberately broken caches, one that skipped
-    write-backs and one that never set dirty bits, both failed immediately.
-  </p>
-  <p>
-    On the board, a simulation twin of the board wrapper predicts all 16 words the board can report: cycle and event
-    counters, results, the final PC and instruction, and miss counts. A script reads the same words over JTAG through
-    In-System Sources and Probes and flags any that differ. The board's switches select any word for the 7-segment
-    display.
-  </p>
-
-  <h2>Challenges</h2>
-
-  <h3>The board disagreed with the simulation</h3>
-  <p>
-    The first time the insertion sort ran on the board, it reported the wrong checksum, and 34,529 cycles instead of
-    the predicted 30,841, identically at two clock speeds. Since a timing problem would have changed with the clock
-    speed, I suspected the hardware was logically different from the RTL. I exported the post-fit netlist from Quartus
-    and simulated it with Altera's primitive library, and it reproduced the board's numbers digit for digit.
-  </p>
-  <p>
-    Comparing the netlist's retired instructions with the reference model, the first difference was instruction
-    13,649, a branch on a value that had just been loaded. These were the first loads the program executes, since
-    everything before them only stores. A loaded value of <code>0x000000F5</code> came back as
-    <code>0xF5000000</code>. Inspecting the netlist showed why: the data memory's block RAMs had only 8 of their 32
-    write-data inputs connected, and the other 24 tied to ground. Quartus had mis-built the byte-enable RAM my RTL
-    described, without a warning. I rewrote the data memory as four independent byte-lane RAMs, each with its own
-    write enable, so no byte-enable inference is involved, and the same lanes became the data cache's design later.
-    The lesson stuck: passing RTL simulation doesn't prove the hardware, so I check what synthesis actually built.
-  </p>
-
-  <h3>Bringing up the SRAM</h3>
-  <p>
-    My first SRAM controller passed its testbench, but that testbench treated the SRAM as an ideal memory. I wrote a
-    model of the chip that enforces its timing rules: the address and data must be stable around the write strobe,
-    data is only valid after the access time, and nothing else may drive the bus while the chip does. Against it, the
-    controller produced 238 violations, such as the address changing on the same clock edge as the write strobe. I
-    rewrote it so every transfer has a full setup cycle, a strobe and a full hold cycle, with every pin driven from an
-    I/O-cell register.
-  </p>
-  <p>
-    Before connecting it to the processor I built a standalone board test that writes every word of the SRAM with a
-    pattern derived from its address, reads it all back, then repeats with every bit inverted. To make sure the test
-    could catch a fault, I ran it in simulation against chip models with a stuck address bit and a stuck data bit,
-    and it flagged both at the expected addresses. On the board it completed over a hundred full passes of all
-    512&nbsp;KB with no errors, which settled the pins, the two-way data bus and the timing before the caches existed.
-  </p>
-
-  <h3>Getting the caches into block RAM</h3>
-  <p>
-    Quartus decides from the Verilog whether a memory becomes block RAM, and when the code doesn't match one of its
-    templates it silently builds the memory out of flip-flops and logic instead. This came up three times.
-  </p>
-  <ul>
-    <li>The instruction memory was being built from logic. Nothing writes it, so Quartus treats it as a ROM, and ROMs
-      follow the <code>romstyle</code> attribute rather than the <code>ramstyle</code> I had used.</li>
-    <li>Each data cache lane needs two read/write ports, with a clock enable on the pipeline's port so a freeze holds
-      the load data. I tested several coding styles in small prototype projects and found that Quartus 13 won't infer
-      a true dual-port RAM with any clock enable at all. An earlier experiment that needed a similar RAM had fallen back
-      to over 20,000 logic elements, more than the whole chip. The lanes now instantiate Altera's
-      <code>altsyncram</code> block directly for synthesis, with a behavioural model for simulation.</li>
-    <li>When I placed a multiplexer in front of the data memory's address, Quartus could no longer merge the EX/MEM
-      pipeline register into the block RAM's own address register, and Fmax dropped by about 6&nbsp;MHz. Every cache
-      RAM is therefore addressed directly by a pipeline register, which is why the cache controller has its own port
-      instead of sharing the pipeline's.</li>
-  </ul>
-
-  <h3>Closing timing after the caches</h3>
-  <p>
-    Adding the caches spread the design across both columns of block RAM on the chip, and Fmax fell to 49.65&nbsp;MHz,
-    0.14&nbsp;ns short of the 20&nbsp;ns clock period. Every failing path started at the data cache output: load data
-    in WB, forwarded into EX, through the 32-bit branch compare and the next-PC logic, and across the chip into the
-    instruction cache's address registers.
-  </p>
-  <p>
-    The branch compare arrives last but passed through four levels of next-PC logic. I rewrote the next-PC logic to
-    compute the next PC for both outcomes of the compare and let the compare choose between them in one final mux.
-    The first compile came out slower, at 46.8&nbsp;MHz, because Quartus had merged the two halves back into one deep
-    function. Marking both halves with a <code>keep</code> attribute stopped that and brought Fmax to 51.0&nbsp;MHz.
-    The next worst path was the JALR target, which came out of the ALU and so waited on its shifter and result mux even
-    though it only needs <code>rs1&nbsp;+&nbsp;imm</code>. Giving JALR its own adder, as I had done earlier for the branch
-    comparator, brought the design to 52&ndash;54&nbsp;MHz.
-  </p>
-  <!-- FIGURE (to draw): next-PC selection, with fetch_pc, the two halves next_pc_t / next_pc_n,
-       and the final mux selected by the branch compare. -->
-
-  <h3>A miss that never finished</h3>
-  <p>
-    One test hung with the clock enable low every other cycle and the instruction cache starting empty. It retired 8
-    of its 25 instructions while the instruction cache refilled the same line 277 times. The cache's tag RAM is only
-    read on edges where the pipeline moves. At half speed, the edge right after a refill wrote the new tag was often a
-    disabled one, so the controller went back to idle still looking at the old tag, decided it had missed again, and
-    fetched the line again, forever. The fix makes the controller's last state wait for an edge where the pipeline
-    moves, so the tag is re-read before it returns to idle.
-  </p>
-  <p>
-    Neither condition caused the bug on its own. Tests with an empty cache at full speed passed, and so did tests at
-    half speed with the cache preloaded. Since then the suites run the combinations of cache and clock-enable modes
-    after every cache change.
-  </p>
-
-  <h2>Results</h2>
-  <p>
-    The insertion sort of 64 words as each major feature was added, counted in CPU cycles. For the cached version the
-    count is at the 50&nbsp;MHz setting, since misses are served at a fixed rate and cost fewer CPU cycles at slower
-    settings.
+    The two-bit predictor was a starting point, so I added four more behind the same interface and compared all five
+    on 19 benchmark programs, at every size from 8 bits of state to 36&nbsp;Kbit. The predictor and its table
+    sizes are chosen at build time in <code>defines.vh</code>. Each one looks up in ID, carries what it read to EX in a
+    <code>pred_meta</code> field, and trains in EX when the branch resolves, so training always updates the counter the
+    prediction came from.
   </p>
   <table>
-    <tr><th>Version</th><th>Cycles</th><th>CPI</th><th>Flushes</th><th>Fmax</th></tr>
-    <tr><td>Pipeline with forwarding, branches predicted not taken</td><td>30,841</td><td>1.22</td><td>4,519</td><td>35.5 MHz</td></tr>
-    <tr><td>+ two-bit branch predictor</td><td>27,892</td><td>1.10</td><td>1,568</td><td>54.2 MHz</td></tr>
-    <tr><td>+ caches, with main memory in SRAM</td><td>28,564</td><td>1.13</td><td>1,568</td><td>52&ndash;54 MHz</td></tr>
+    <tr><th>Predictor</th><th>Chooses a two-bit counter using</th><th>State bits</th></tr>
+    <tr><td>Bimodal</td><td>The branch's PC</td><td>2&middot;2<sup><i>i</i></sup></td></tr>
+    <tr><td>Correlating</td><td>The PC, concatenated with the last <i>h</i> branch outcomes (the global history)</td><td>2&middot;2<sup><i>i</i>+<i>h</i></sup> + <i>h</i></td></tr>
+    <tr><td>Gshare</td><td>The PC, XORed with the global history</td><td>2&middot;2<sup><i>i</i>+<i>h</i></sup> + <i>h</i></td></tr>
+    <tr><td>Local</td><td>The branch's own last <i>l</i> outcomes, from a table of 2<sup><i>i</i></sup> histories selected by the PC</td><td>2<sup><i>i</i></sup>&middot;<i>l</i> + 2&middot;2<sup><i>l</i></sup></td></tr>
+    <tr><td>Tournament</td><td>Local and gshare side by side, with a two-bit chooser per PC slot picking one</td><td>Both, plus 2&middot;2<sup><i>i</i></sup></td></tr>
   </table>
   <p>
-    All three versions retire the same 25,276 instructions with 1,044 load-use stalls. The cycle count adds up exactly:
-    25,276 instructions, plus 1,044 stalls, plus 1,568 flushes, plus 16 cache misses of 42 cycles each, comes to
-    28,560, with a few more cycles to fill the pipeline. The 16 misses are compulsory, one per line of the array, and
-    cost 2.4% of the run. Before the caches were added, the board matched the simulation's prediction on every counter.
+    Gshare and the tournament update their global history speculatively: a branch shifts its prediction into the
+    history as it enters EX, and a mispredict restores the history it was predicted with plus its real outcome.
+    Correlating shifts the history in when the branch resolves.
   </p>
 
-  <h2>What I'd do next</h2>
+  <h3>Method</h3>
+  <p>
+    Rather than simulate the RTL at all 1,439 configurations, I wrote a Python model of each predictor and replayed
+    every program's branches through it. The programs come from Embench, CoreMark and riscv-tests, 3.35 million
+    instructions and about 929,000 conditional branches in all, and each starts from a reset predictor as it would on
+    the board. The models are held to the RTL. In every directed, random and benchmark test the RTL's flush count must
+    equal the model's, every one of 42,000 predictions matches at 14 non-default sizes, and five larger builds ran the
+    full benchmarks with their flushes matching the model exactly. For the hardware cost I compiled the whole design in
+    Quartus at a selection of sizes.
+  </p>
+  <p>
+    Accuracy is measured in mispredicts per thousand instructions (MPKI), totalled over all 19 programs. A mispredict
+    costs one cycle in this pipeline, so MPKI is also the number of cycles a predictor loses per thousand instructions.
+  </p>
+
+  <h3>Most mispredicts are in software multiply</h3>
+  <p>
+    RV32I has no multiply or divide instructions, so the compiler turns every <code>a&nbsp;*&nbsp;b</code> into a call to
+    <code>__mulsi3</code> in libgcc, GCC's support library, and every division into <code>__udivsi3</code> or one of its
+    relatives. <code>__mulsi3</code> is a shift-and-add loop with two branches per bit of the multiplier: one tests the
+    bit and one checks whether any bits are left. The bit test goes whichever way the data says, so it is only as
+    predictable as the operands. These routines account for 59% of the instructions executed, 74% of the conditional
+    branches and 87&ndash;90% of every predictor's mispredicts.
+  </p>
+  <figure>
+    <img src="../images/pipelined-processor/bp-mispredict-breakdown.png" width="1200" height="600" alt="Horizontal stacked bars of mispredicts for the five predictors at their default sizes, from about 147,000 for the tournament to 168,000 for bimodal, with the libgcc multiply and divide part making up about 87 to 90 percent of each bar">
+    <figcaption>Mispredicts at each predictor's default size, split between libgcc's multiply and divide routines and the programs' own code.</figcaption>
+  </figure>
+  <p>
+    On this code, comparing predictors mostly means comparing how well they guess multiplier bits, which a processor with
+    the M extension never has to do. So every configuration also runs on a second version of each branch stream, with
+    those routines' branches removed and their instructions dropped from the count. That approximates the same
+    programs on a core with hardware multiply and divide. Below, <i>as built</i> is the first workload and
+    <i>without libgcc</i> is the second.
+  </p>
+
+  <h3>Accuracy against size</h3>
+  <figure>
+    <div class="row">
+      <img src="../images/pipelined-processor/bp-pareto-as-built.png" width="1200" height="750" style="--w: 560" alt="Best MPKI against predictor state from 8 bits to 64 Kbit as built: bimodal flattens near 50 from about 256 bits, correlating and gshare reach about 43, and local and tournament keep falling to about 24 to 27">
+      <img src="../images/pipelined-processor/bp-pareto-hw-muldiv.png" width="1200" height="750" style="--w: 560" alt="Best MPKI against predictor state without libgcc: bimodal flattens near 15, correlating and gshare reach about 12.5, and the tournament is lowest from 1 Kbit up, reaching about 9">
+    </div>
+    <figcaption>Best MPKI among the configurations that fit each state budget, as built (left) and without libgcc (right). The dashed line is a static backward-taken prediction, and the dotted line is the smallest predictor that didn't fit the FPGA.</figcaption>
+  </figure>
+  <p>
+    Any two-bit counter beats a static guess by a wide margin. Predicting backward branches taken and forward branches
+    not taken gives 69.5 MPKI, and the default bimodal predictor, only 64 bits of state, gives 50.2, 28% fewer. Without
+    libgcc the gap is wider, 44.3 against 16.1, or 64% fewer. Bimodal then stops improving at about 512 counters
+    (49.65 MPKI). On programs this small its table isn't limited by aliasing; it simply can't learn patterns.
+  </p>
+  <p>
+    The predictors that use history pull ahead from about 1&nbsp;Kbit, and the tournament is the best or tied at every
+    size from there up. At 1&nbsp;Kbit without libgcc it reaches 11.9 MPKI, against 12.5 for local, 14.0 for gshare,
+    14.4 for correlating and 14.75 for bimodal. Very small budgets are the exception: 64 bits split three ways doesn't
+    work, and the bimodal predictor (50.2) beats every 64-bit tournament (54.3).
+  </p>
+  <table>
+    <tr><th>Budget</th><th>Bimodal</th><th>Correlating</th><th>Gshare</th><th>Local</th><th>Tournament</th></tr>
+    <tr><td>256 bits</td><td>49.8 / 15.2</td><td>48.8 / 16.7</td><td>48.9 / 16.8</td><td>48.3 / 15.3</td><td>48.1 / 15.6</td></tr>
+    <tr><td>1 Kbit</td><td>49.7 / 14.8</td><td>46.8 / 14.4</td><td>46.5 / 14.0</td><td>44.8 / 12.5</td><td>44.2 / 11.9</td></tr>
+    <tr><td>4 Kbit</td><td>49.7 / 14.8</td><td>46.0 / 13.5</td><td>45.9 / 13.2</td><td>40.2 / 11.3</td><td>39.6 / 10.1</td></tr>
+    <tr><td>32 Kbit</td><td>49.7 / 14.8</td><td>43.5 / 12.6</td><td>44.1 / 12.5</td><td>27.7 / 10.6</td><td>27.1 / 9.0</td></tr>
+  </table>
+  <p class="small">
+    Best MPKI at each budget, as built / without libgcc. These are model results; not every size fits the FPGA (see
+    the hardware cost below).
+  </p>
+
+  <h3>Local's lead is memorized multiplications</h3>
+  <figure>
+    <div class="row">
+      <img src="../images/pipelined-processor/bp-heatmap-local-as-built.png" width="1050" height="825" style="--w: 500" alt="Heatmap of local predictor MPKI as built over history length 2 to 14 bits and 1 to 1,024 histories, falling steadily from about 58 at short histories to 24 at 14 bits">
+      <img src="../images/pipelined-processor/bp-heatmap-local-hw-muldiv.png" width="1050" height="825" style="--w: 500" alt="Heatmap of local predictor MPKI without libgcc over the same grid, which reaches about 11 to 12 by 8 to 10 bits of history and stops improving">
+    </div>
+    <figcaption>Local predictor MPKI over history length and the number of histories, as built (left) and without libgcc (right). The two color scales are different.</figcaption>
+  </figure>
+  <p>
+    As built, local looks like the best single predictor at large sizes, and it keeps improving as each branch's
+    history grows. With 32 histories, 8 bits of history give 44.9 MPKI, 13 bits 28.2 and 14 bits 24.7. Without libgcc
+    the same three configurations give 12.7, 11.5 and 11.6, so the extra length buys almost nothing. The local history
+    of the bit-test branch in <code>__mulsi3</code> is the sequence of multiplier bits it has just seen, and a long
+    enough history recognizes which multiplier the loop is working through. That is a real effect on this processor,
+    but it disappears with a hardware multiplier, so I wouldn't size a predictor around it.
+  </p>
+
+  <h3>Combining the PC with the history</h3>
+  <figure>
+    <div class="row">
+      <img src="../images/pipelined-processor/bp-index-as-built.png" width="1050" height="675" style="--w: 500" alt="MPKI against table size as built for gshare with history XORed into the top index bits, gshare with it XORed into the low bits, and correlating, where the low-bit version sits clearly above the other two until the tables reach about 16 Kbit">
+      <img src="../images/pipelined-processor/bp-index-hw-muldiv.png" width="1050" height="675" style="--w: 500" alt="The same comparison without libgcc, where top-bit XOR and concatenation stay together, falling from about 21 to 12.5 MPKI, and low-bit XOR stays 2 to 5 MPKI higher at every size">
+    </div>
+    <figcaption>Best MPKI at each table size for three ways of combining the PC with the global history, as built (left) and without libgcc (right).</figcaption>
+  </figure>
+  <p>
+    Correlating and gshare differ only in how they combine the history with the PC. Correlating concatenates the two,
+    and my gshare XORs the history into the top bits of the index, and they stay within 3% of each other at every size.
+    The textbook gshare XORs the history into the low bits instead, and that is clearly worse here. At the built size,
+    512 counters with 4 bits of history, it has 17% more mispredicts as built (54.2 against 46.2 MPKI) and 47% more
+    without libgcc (19.8 against 13.5). Even with its best history length at each size, it stays 16&ndash;18% behind
+    without libgcc from 1&nbsp;Kbit up. The low index bits are what tell neighbouring branches apart, and in small
+    programs the neighbours are the hot branches, so XORing the history into those bits makes the busiest branches
+    collide.
+  </p>
+  <p>
+    The best history length grows with the table. For gshare as built it is 3 bits at 256 counters, 4 at 512, 5 at
+    1K and 13 at 8K&ndash;16K, and the built default of 4 bits at 512 counters is the best for its size. Speculative
+    history, on the other hand, is worth little in a five-stage pipeline: without libgcc it saves at most about
+    0.3 MPKI at any size. A branch resolves one stage after it is predicted, so only one branch can be in flight when
+    the next one is predicted, and a history updated at training is at most one outcome behind.
+  </p>
+
+  <h3>Hardware cost</h3>
+  <figure>
+    <img src="../images/pipelined-processor/bp-cost.png" width="1200" height="1200" style="max-width: min(100%, 800px)" alt="Two panels against predictor state: logic elements for the whole design rising from about 6,300 at 64 bits to 13,700 near 4 Kbit, with a cross at the chip's capacity for a build that did not fit, and Fmax mostly between 51 and 54 MHz, with two two-level predictors near 47.5 MHz below the 50 MHz line">
+    <figcaption>Logic elements and Fmax of the whole design against predictor state, from Quartus. The cross marks a build that didn't fit.</figcaption>
+  </figure>
+  <p>
+    The caches use all 52 block RAMs, so every predictor bit is a flip-flop in a logic element. Each bit of state costs
+    about 2.3&ndash;2.4 logic elements, so growing a bimodal table from 64 to 2,048 bits takes the whole design from
+    6,310 to 10,906. None of the flat 4&nbsp;Kbit tables (bimodal, correlating and gshare) fit the chip: the fitter
+    needed 1,225&ndash;1,227 logic array blocks of the 1,172 available. The largest design that fit was a 3,843-bit
+    tournament, at 13,683 logic elements.
+  </p>
+  <p>
+    Timing splits the predictors into two groups. The flat tables kept 0.75&ndash;1.4&nbsp;ns of slack
+    (51.9&ndash;53.8&nbsp;MHz) at every size that fit, since their lookup isn't the slowest path. The two-level
+    predictors don't: in local, the branch's history selects the counter, and the counter feeds the next-PC logic.
+    Local's slack falls from 0.77&nbsp;ns with 32 histories to 0.41&nbsp;ns with 64 and &minus;1.08&nbsp;ns with 128
+    (47.4&nbsp;MHz), and a tournament with 64 histories fails the same way. The largest tournament that met
+    50&nbsp;MHz has 3,460 bits (32 histories of 10 bits and 4 bits of global history), at 13,167 logic elements and
+    51.2&nbsp;MHz. It gives 39.9 MPKI as built and 10.1 without libgcc.
+  </p>
+
+  <h3>What it's worth</h3>
+  <p>
+    With the default bimodal predictor, mispredicts cost 4.6% of all cycles (168,250 of about 3.63 million). The
+    3,460-bit tournament saves 34,573 of those cycles, 0.95% of the run, and a tournament at the default settings
+    (1,860 bits) saves 21,371, or 0.59%. A mispredict costs only one cycle in a five-stage pipeline, so the predictor
+    matters little here, and a deeper pipeline would multiply every one of these differences. No predictor wins every
+    program either. At 1&nbsp;Kbit as built, the tournament is clearly best on 5 programs, bimodal on 5, correlating on
+    3, gshare on 2 and local on 1, with 3 ties. The short programs favour bimodal, which has fewer counters to warm up
+    from reset.
+  </p>
+  <p>
+    The bigger lesson is where the branches come from. libgcc's multiply and divide loops execute 59% of all the
+    instructions in these programs, so a hardware multiplier would save far more cycles than any of these predictors.
+  </p>
+
+  <h2>Faster memory</h2>
+  <p>
+    With the caches working, I measured where the time went. Across the 19 benchmarks the data cache froze the pipeline
+    for 4.35% of all cycles, and far more for small programs: 66% for vvadd and 58% for median. Every miss cost the
+    same 42 cycles, and 35 of them were the SRAM controller moving the line. All 3,923 misses were compulsory, the
+    first touch of each line, so a larger or more associative cache wouldn't have removed any of them. The only lever
+    was the cost of a miss.
+  </p>
+  <p>
+    To stress the memory harder than the benchmarks do, I added three kernels. One streams through a 32&nbsp;KB array,
+    one copies between buffers 16&nbsp;KB apart so that they share every cache index, and one follows pointers across
+    64&nbsp;KB. On the original design they spend 72&ndash;93% of their cycles waiting on memory. I then made five
+    changes, each measured in RTL simulation and checked by the full test suite.
+  </p>
+  <table>
+    <tr><th>Design (each keeps the changes above it)</th><th>Clean miss</th><th>Dirty miss</th><th>19 benchmarks</th><th>Memory kernels</th></tr>
+    <tr><td>Original</td><td>42</td><td>82</td><td>&ndash;</td><td>&ndash;</td></tr>
+    <tr><td><code>WAIT_CYCLES</code> = 1</td><td>34</td><td>66</td><td>&minus;0.8%</td><td>&minus;16.5%</td></tr>
+    <tr><td>Pipelined reads</td><td>18</td><td>58</td><td>&minus;2.5%</td><td>&minus;36.2%</td></tr>
+    <tr><td>+ Two-cycle writes</td><td>18</td><td>41</td><td>&minus;2.5%</td><td>&minus;45.6%</td></tr>
+    <tr><td>+ Line-wide block RAM port, fewer controller states</td><td>12</td><td>31</td><td>&minus;3.1%</td><td>&minus;56.8%</td></tr>
+    <tr><td>+ Write-back buffer</td><td>12</td><td>29</td><td>&minus;3.1%</td><td>&minus;61.2%</td></tr>
+  </table>
+  <p class="small">
+    Miss costs are the cycles the pipeline is frozen. The last two columns are the change in total cycles against the
+    original design, with each program preloaded into the instruction cache as on the board.
+  </p>
+  <figure>
+    <img src="../images/pipelined-processor/mem-miss-breakdown.png" width="1350" height="600" alt="Horizontal stacked bars of the cycles in one clean data cache miss: 42 originally, 34 with WAIT_CYCLES at 1, 18 with one-cycle reads and two-cycle writes, and 12 with the line-wide port and fewer controller states, with the SRAM transfer making up most of each bar">
+    <figcaption>Where the cycles of one clean data cache miss go. Each row keeps the changes above it.</figcaption>
+  </figure>
+
+  <h3>A smaller margin</h3>
+  <p>
+    The SRAM controller gives each 16-bit beat a cycle of setup, a strobe of <code>WAIT_CYCLES</code> cycles and a
+    cycle of hold. Cutting <code>WAIT_CYCLES</code> from 2 to 1 is a one-parameter change: a beat takes 3 cycles
+    instead of 4, a clean miss takes 34, and the board's full-memory test passes at 28.3&nbsp;MB/s, up from 21.7, with
+    no errors in 919 rounds. It can't go further, though, because whole cycles of setup and hold still surround every
+    beat, and a read doesn't need them.
+  </p>
+
+  <h3>Pipelined reads</h3>
+  <p>
+    An asynchronous SRAM has no read strobe. With output enable held low, its data output simply follows the address,
+    10&nbsp;ns after it changes. So reads can be pipelined: the controller puts a new address out on every clock edge,
+    and on that same edge the input register in the FPGA's I/O cell samples the data for the previous address. A line
+    read drops from 35 cycles to 11 and a clean miss from 42 cycles to 18, the largest single gain.
+  </p>
+  <p>
+    The whole read now has to fit in one 20&nbsp;ns clock period, so I checked the budget against Quartus' pin
+    timing. The address leaves the FPGA 5.72&nbsp;ns after the edge in the slow corner, the SRAM takes 10&nbsp;ns and
+    the board traces about 1&nbsp;ns more, about 16.7&nbsp;ns in total. The input register's setup time is negative
+    (&minus;1.39&nbsp;ns), so 21.4&nbsp;ns are available, leaving about 4.7&nbsp;ns to spare. For hold, the next address
+    leaves the FPGA at least 3.2&nbsp;ns after the edge in the fast corner, against a 1.6&nbsp;ns requirement, and the
+    chip keeps driving the old data a little longer than that. The read path is still register to register, so a
+    two-cycle read is a ready fallback if a board ever proves marginal, at 8 more cycles per miss.
+  </p>
+
+  <h3>Two-cycle writes</h3>
+  <p>
+    Writes do need a strobe. With every pin changing on a rising edge, a write beat takes at least three cycles,
+    because the address can't change on the same edge that the write strobe <code>WE_N</code> rises. Driving
+    <code>WE_N</code> from a register clocked on the falling edge splits the beat into half cycles: the address and
+    data change on a rising edge, <code>WE_N</code> falls half a cycle later and rises half a cycle before the next
+    address. That gives 10&nbsp;ns of setup, a 20&nbsp;ns strobe and 10&nbsp;ns of hold in two cycles, with nothing
+    changing on the same edge as <code>WE_N</code>, and Quartus still packs the register into the pin's I/O cell. A
+    line write drops from 35 cycles to 18, and a miss that has to write back a dirty line from 58 cycles to 41.
+  </p>
+  <p>
+    With pipelined reads and two-cycle writes, the board's memory test moves 52.6&nbsp;MB/s, 2.4 times the original,
+    with no errors in 3,291 rounds. That is about 3.4 billion 16-bit transfers, with every read checked.
+  </p>
+  <figure>
+    <img src="../images/pipelined-processor/mem-board.png" width="1650" height="525" alt="Two bar charts measured on the DE1 at 50 MHz: SRAM bandwidth rising from 21.7 to 28.3 to 52.6 MB/s, and the memory kernels falling from 1,342,041 cycles originally to 730,433 with the new SRAM controller and 520,505 with the cache-side changes as well">
+    <figcaption>Measured on the board. Left: the SRAM memory test. Right: the three memory kernels on the processor, with all 16 words the board reports matching simulation.</figcaption>
+  </figure>
+
+  <h3>Fewer cycles in the cache</h3>
+  <p>
+    Once the SRAM was fast, the data cache's own bookkeeping became a large share of what was left. Three changes
+    remove most of it:
+  </p>
   <ul>
-    <li>A program loader over UART or JTAG, and a single shared address space for code and data, so programs can use
-      all 512&nbsp;KB instead of the 8&nbsp;KB preloaded with the FPGA image.</li>
-    <li>Faster misses. The SRAM controller uses a fraction of the chip's speed, and a write-back buffer would let a
-      dirty miss fetch its new line before writing the old one back, roughly halving its cost.</li>
-    <li>Register load data in MEM to remove every critical path that starts at the data cache, which together with a
-      PLL should allow 65&ndash;70&nbsp;MHz.</li>
-    <li>CSRs, traps and interrupts.</li>
+    <li><b>A line-wide controller port.</b> Each byte lane becomes a mixed-width dual-port block RAM, 4096&times;8 on
+      the pipeline's side and 1024&times;32 on the controller's, so the controller writes a whole line in one cycle
+      instead of four.</li>
+    <li><b>The dirty bit read a stage early,</b> together with the tag, with a bypass for a store hit to the same line
+      just ahead in the pipeline. The original design read it after the miss to avoid exactly that case, and this
+      removes the state that did so.</li>
+    <li><b>The line written as it arrives.</b> The line goes straight from the controller into the RAM, along with its
+      tag, on the edge the transfer completes. The miss path shrinks to three states: idle, fill and done.</li>
   </ul>
+  <p>
+    Together these save 6 cycles per clean miss and 10 per dirty one. That's a small share of the original 42 cycles
+    but a third of the 18 that were left, and the design still fits in the same 52 block RAMs.
+  </p>
+
+  <h3>Write-back buffer</h3>
+  <p>
+    Finally, a dirty victim is parked in a buffer and the new line is fetched first, so the pipeline continues while
+    the write-back runs in the background. Any later miss waits for the buffer to drain, so a re-fetch can never read
+    stale data from the SRAM. The benchmarks gain nothing, since they have a single write-back between them, but the
+    streaming kernel, which has work between misses to hide the write-back behind, goes from 48% to 56% fewer cycles.
+  </p>
+
+  <h3>What it changed</h3>
+  <figure>
+    <img src="../images/pipelined-processor/mem-programs.png" width="1350" height="1125" style="max-width: min(100%, 800px)" alt="Horizontal bars of the cycle reduction per program with all five changes, from about 48 to 53 percent for vvadd down to about 1 percent for CoreMark and Dhrystone, and 56 to 65 percent for the three memory kernels, with the code-from-SRAM bars mostly longer than the preloaded ones">
+    <figcaption>Cycles saved by all five changes, per program, with the code preloaded into the instruction cache (as on the board) and fetched from SRAM (as it would be with a program loader).</figcaption>
+  </figure>
+  <p>
+    With all five changes the benchmarks take 3.1% fewer cycles, or 5.8% fewer when their code is fetched from SRAM,
+    all of it from memory stalls, which fall from 4.35% to 1.28% of cycles. Memory-bound programs gain far more: vvadd
+    takes 48% fewer cycles, median 42% and statemate 27%, while compute-bound programs like CoreMark and Dhrystone gain
+    about 1%. The memory kernels run 2.3 to 2.8 times faster.
+  </p>
+  <p>
+    On the board at 50&nbsp;MHz, the kernels took 1,342,041 cycles on the original design, 730,433 with the new
+    controller and 520,505 with everything, and median dropped from 21,737 cycles to 12,707. All 16 words the board
+    reports matched simulation exactly in every run, which also confirmed on silicon the byte order of the mixed-width
+    block RAM port, which only a simulation model had checked before. Every version fits the same 52 block RAMs, uses
+    6,176&ndash;6,313 logic elements (the original uses 6,275) and meets 50&nbsp;MHz with 0.95&ndash;1.20&nbsp;ns of
+    slack.
+  </p>
+  <p>
+    The work also exposed a gap in my testbenches. They clocked the processor at 10&nbsp;ns, half the board's period.
+    The original controller samples read data three cycles after the address, so the SRAM model's access-time check
+    could never fire, but a one-cycle read is only valid at the real 20&nbsp;ns. The testbenches for the new controller
+    run at 20&nbsp;ns, so the SRAM model checks the timing the board actually sees.
+  </p>
+  <p>
+    These changes are kept as patches against the main design, which the memory system section above still describes.
+    Each one passes the full regression at 20&nbsp;ns: the unit tests, the directed tests in every clock-enable and
+    cache mode, 200 random programs per mode, and the same results and instruction counts as the original on all 23
+    programs.
+  </p>
 
   <h2>Tools</h2>
-  <p>Verilog, Icarus Verilog, Quartus II 13.0sp1 (TimeQuest, In-System Sources and Probes), RISC-V GCC, Python, Tcl.</p>
+  <p>Verilog, Icarus Verilog, Quartus II 13.0sp1 (TimeQuest, In-System Sources and Probes), RISC-V GCC, Python (NumPy, matplotlib), Tcl.</p>
 
   <hr>
   <p class="small"><a href="../index.html">&lt;- Home</a></p>

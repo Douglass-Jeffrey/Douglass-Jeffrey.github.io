@@ -23,7 +23,16 @@
   </p>
 
   <h2>Projects</h2>
-  
+    <article class="project">
+    <a href="projects/pipelined-processor.html"><img src="images/pipelined-processor/chip_planner_2_worst_case_paths_zoomed.png" width="600" height="400" alt="Quartus Chip Planner view of the FPGA's logic array blocks, with the processor's two slowest timing paths, one orange and one blue, zig-zagging across the chip"></a>
+    <div>
+      <h3><a href="projects/pipelined-processor.html">Branch Prediction and Memory Optimization in a Custom RISC-V Soft Processor</a></h3>
+      <p>
+        Designed a 5-stage pipelined RV32I CPU in Verilog, running at 50 MHz on a Cyclone II FPGA, with forwarding, branch prediction, and instruction and data caches backed by onboard SRAM. Compared five branch predictors at sizes from 8 bits to 64 Kbit and redesigned the memory system, cutting the cycles spent waiting on memory by 71%.
+      </p>
+      <p class="small"><a href="https://github.com/Douglass-Jeffrey/Cyclone-2-Pipelined-Processor">GitHub</a></p>
+    </div>
+  </article>
   <article class="project">
     <a href="projects/polya-capstone.html"><img src="images/polya-capstone/capstone-network.jpg" width="600" height="400" alt="A large network rendered in Gephi, with most nodes turned red as the contagion spreads"></a>
     <div>
@@ -32,17 +41,6 @@
         Designed a GPU-accelerated algorithm for simulating the graphed P&oacute;lya contagion process on scale free networks with tens of millions of nodes. Optimized the algorithm for performance and scalability on available hardware.  Comparing different intervention strategies to optimize cost while achieving consensus. 
       </p>
       <p class="small"><a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks">GitHub</a>, <a href="https://github.com/Douglass-Jeffrey/MTHE493_Capstone_Polya_Process_with_Switched_Networks/blob/optimization/docs/MTHE_493___Thesis.pdf">Thesis</a></p>
-    </div>
-  </article>
- 
-  <article class="project">
-    <a href="projects/pipelined-processor.html"><img src="images/pipelined-processor/processor-pipeline.svg" width="600" height="400" alt="Block diagram of a five-stage pipeline with instruction and data caches in front of SRAM"></a>
-    <div>
-      <h3><a href="projects/pipelined-processor.html">Pipelined RISC-V Processor on an FPGA</a></h3>
-      <p>
-        5-stage pipelined RV32I CPU in Verilog, running at 50 MHz on a Cyclone II FPGA. Features forwarding, branch prediction, and write back direct mapped cache using fabric M4k's and onboard SRAM. 
-      </p>
-      <p class="small"><a href="https://github.com/Douglass-Jeffrey/Cyclone-2-Pipelined-Processor">GitHub</a></p>
     </div>
   </article>
 <!--

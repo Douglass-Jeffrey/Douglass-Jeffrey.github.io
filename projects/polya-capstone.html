@@ -37,7 +37,7 @@
     I designed and implemented a simulation and data analysis framework to study the behaviour of these processes under varying constraints
     of network density and scale, process memory and information dissemination, and intervention vectors.
     The main technical challenge was computational. The initial implementation was limited to sparse networks of around one thousand nodes,
-    whereas the final implementation can simulate dense networks in the range of 10<sup>8</sup> nodes.
+    whereas the final implementation can simulate dense networks in the range of 10<sup>9</sup> nodes.
   </p>
 
   <h2>Model Background</h2>
@@ -86,12 +86,6 @@
   </p>
   <p>
     where Z<sub>t</sub> is 1 if the draw at step t was red and 0 otherwise. 
-    <!--We used M = 72, and every urn starts with one ball of each colour, so each urn settles at exactly 74 balls.
-    Following the contagion literature, red balls represent infection, and a node is classified as infected when at least 80%
-    of its urn is red (60 or more red balls), and the network reaches consensus when 80% of nodes are infected. Unlike the
-    classic urn, this one cannot lock in. Its red fraction moves on the grid k/74, and a node that stops drawing red loses
-    its red bias within M steps, so infection has to be sustained by the node's neighbourhood.
-  -->
   </p>
 
   <h2>Network types</h2>
@@ -123,7 +117,7 @@
 
   <h2>Interventions</h2>
   <p>
-    We compared two ways of pushing the network toward a red consensus, both aimed at its most central nodes.
+    Two ways of pushing the network toward a red consensus were compared, both aimed at its most central nodes.
   </p>
   <ul>
     <li>
@@ -648,8 +642,8 @@
     does the copying, the copies run at the same time as the kernels, unlike in the two-stream version above.
   </p>
   <p>
-    I ran the simulation for 864 steps with a memory of M&nbsp;=&nbsp;72, the settings we used in our experiments, and
-    no interventions, which this version does not yet support. The steps took 60 minutes, a median of
+    I ran the simulation for 864 steps with a memory of M&nbsp;=&nbsp;72, with
+    no interventions. The steps took 60 minutes, a median of
     4.18&nbsp;s per step, less than a third of the 13.4&nbsp;s the original code took for one step on a network 14 times
     smaller. By about step 200 the red fractions settle around one half, with 85% of nodes between 40% and 60% red, so
     without an intervention neither colour takes over.
